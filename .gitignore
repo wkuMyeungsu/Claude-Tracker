@@ -1,0 +1,27 @@
+# Build output
+build/
+*.exe
+*.o
+*.obj
+
+# Qt Creator
+.qtcreator/
+*.user
+*.user.*
+
+# CMake
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
+
+# Build logs (temp files)
+build_out.txt
+build_out2.txt
+build_err.txt
+build_err2.txt
+preprocess_out.txt
+preprocess_err.txt
+
+# Claude Code internal
+.claude/

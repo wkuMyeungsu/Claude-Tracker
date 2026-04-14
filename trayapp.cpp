@@ -1,0 +1,226 @@
+#include "trayapp.h"
+#include "usageapiclient.h"
+#include "usagepopup.h"
+#include "usagescanner.h"
+#include <QApplication>
+#include <QCursor>
+#include <QMenu>
+#include <QPainter>
+#include <QPixmap>
+#include <QTimer>
+
+TrayApp::TrayApp(QObject *parent)
+    : QObject(parent)
+    , m_tray(new QSystemTrayIcon(this))
+    , m_contextMenu(new QMenu)
+    , m_popup(new UsagePopup)
+    , m_apiClient(new UsageApiClient(this))
+    , m_scanner(new UsageScanner(this))
+    , m_countdownTimer(new QTimer(this))
+{
+    m_contextMenu->addAction("종료", qApp, &QApplication::quit);
+
+    m_tray->setContextMenu(m_contextMenu);
+    m_tray->setIcon(makeIcon(0.0));
+    m_tray->setToolTip("ClaudeTray - 불러오는 중...");
+    m_tray->show();
+
+    connect(m_popup, &UsagePopup::quitRequested, qApp, &QApplication::quit);
+
+    connect(m_tray, &QSystemTrayIcon::activated,
+            this, &TrayApp::onTrayActivated);
+
+    connect(m_apiClient, &UsageApiClient::usageFetched,
+            this, &TrayApp::onUsageFetched);
+    connect(m_apiClient, &UsageApiClient::fetchFailed,
+            this, &TrayApp::onFetchFailed);
+    connect(m_scanner, &UsageScanner::localUsageUpdated,
+            this, &TrayApp::onLocalUsage);
+
+    connect(m_countdownTimer, &QTimer::timeout,
+            this, &TrayApp::updateCountdowns);
+    m_countdownTimer->start(60 * 1000);
+}
+
+void TrayApp::onTrayActivated(QSystemTrayIcon::ActivationReason reason)
+{
+    if (reason == QSystemTrayIcon::Context)
+        return;
+
+    if (m_popup->isVisible())
+        m_popup->hide();
+    else
+        m_popup->showNearTray(QCursor::pos());
+}
+
+void TrayApp::onUsageFetched(UsageData data)
+{
+    m_apiFailed = false;
+    m_lastFetchError.clear();
+    m_current = data;
+    m_lastApiData = data;
+    m_hasLastApiData = true;
+    m_lastSuccessfulApiFetchAt = data.fetchedAt;
+
+    m_scanner->setWindowHints(data.fiveHour.resetsAt, data.sevenDay.resetsAt);
+    applyData(data);
+}
+
+void TrayApp::onFetchFailed(QString reason)
+{
+    m_apiFailed = true;
+    m_lastFetchError = reason;
+
+    const UsageData local = m_hasLastApiData
+        ? mergeWithLastApi(m_scanner->calcDeltaFromLocal(m_lastApiData.fetchedAt.toUTC()))
+        : m_scanner->calcFromLocal();
+    m_current = local;
+    applyData(local);
+}
+
+void TrayApp::onLocalUsage(UsageData data)
+{
+    const UsageData merged = m_hasLastApiData
+        ? mergeWithLastApi(m_scanner->calcDeltaFromLocal(m_lastApiData.fetchedAt.toUTC()))
+        : data;
+    m_current = merged;
+    applyData(merged);
+}
+
+void TrayApp::applyData(const UsageData &data)
+{
+    m_popup->setData(data);
+    m_popup->setCountdowns(
+        formatCountdown(data.fiveHour.resetsAt),
+        formatCountdown(data.sevenDay.resetsAt));
+    m_popup->setTimingText(buildTimingText());
+
+    QString status;
+    if (data.fromApi) {
+        status = "API 기준값";
+    } else if (m_hasLastApiData) {
+        status = "API 기준 + 로컬 증분 추정";
+    } else {
+        status = "로컬 추정값";
+    }
+
+    if (!m_lastFetchError.isEmpty())
+        status += QString(" (최근 API 실패: %1)").arg(m_lastFetchError);
+    m_popup->setStatus(status);
+
+    m_tray->setIcon(makeIcon(data.fiveHour.utilization));
+    updateTooltip();
+}
+
+UsageData TrayApp::mergeWithLastApi(const UsageData &data) const
+{
+    if (!m_hasLastApiData)
+        return data;
+
+    UsageData merged = m_lastApiData;
+    merged.fromApi = false;
+    merged.fetchedAt = QDateTime::currentDateTime();
+
+    auto mergeQuota = [](const QuotaInfo &apiQuota, const QuotaInfo &deltaQuota, qint64 limitTokens) {
+        if (!apiQuota.valid)
+            return deltaQuota;
+
+        QuotaInfo mergedQuota = apiQuota;
+        if (limitTokens <= 0)
+            return mergedQuota;
+
+        const qint64 apiTokens = qRound64(apiQuota.utilization * static_cast<double>(limitTokens));
+        const qint64 deltaTokens = qMax<qint64>(0, deltaQuota.rawTokens);
+        mergedQuota.rawTokens = apiTokens + deltaTokens;
+        mergedQuota.limitTokens = limitTokens;
+        mergedQuota.utilization = qMin(1.0, static_cast<double>(mergedQuota.rawTokens) / static_cast<double>(limitTokens));
+        return mergedQuota;
+    };
+
+    merged.fiveHour = mergeQuota(m_lastApiData.fiveHour, data.fiveHour, UsageScanner::planLimit5h());
+    merged.sevenDay = mergeQuota(m_lastApiData.sevenDay, data.sevenDay, UsageScanner::planLimit7d());
+    merged.sevenDaySonnet = m_lastApiData.sevenDaySonnet;
+
+    return merged;
+}
+
+void TrayApp::updateCountdowns()
+{
+    if (!m_current.fetchedAt.isValid())
+        return;
+
+    m_popup->setCountdowns(
+        formatCountdown(m_current.fiveHour.resetsAt),
+        formatCountdown(m_current.sevenDay.resetsAt));
+    m_popup->setTimingText(buildTimingText());
+}
+
+void TrayApp::updateTooltip()
+{
+    auto pct = [](const QuotaInfo &quota) -> QString {
+        return quota.valid ? QString("%1%").arg(qRound(quota.utilization * 100.0)) : "--";
+    };
+
+    m_tray->setToolTip(
+        QString("Claude Code Usage\n5h: %1  |  7d: %2\n%3")
+            .arg(pct(m_current.fiveHour))
+            .arg(pct(m_current.sevenDay))
+            .arg(formatCountdown(m_current.fiveHour.resetsAt)));
+}
+
+QIcon TrayApp::makeIcon(double utilization)
+{
+    QPixmap px(22, 22);
+    px.fill(Qt::transparent);
+
+    QPainter p(&px);
+    p.setRenderHint(QPainter::Antialiasing);
+
+    QColor color;
+    if (utilization < 0.50)
+        color = QColor(40, 167, 69);
+    else if (utilization < 0.80)
+        color = QColor(255, 193, 7);
+    else
+        color = QColor(220, 53, 69);
+
+    p.setBrush(color);
+    p.setPen(QPen(color.darker(120), 1));
+    p.drawEllipse(2, 2, 18, 18);
+
+    return QIcon(px);
+}
+
+QString TrayApp::formatCountdown(const QDateTime &resetsAt) const
+{
+    if (!resetsAt.isValid())
+        return "리셋 시각 정보 없음";
+
+    const qint64 secs = QDateTime::currentDateTimeUtc().secsTo(resetsAt.toUTC());
+    if (secs <= 0)
+        return "곧 리셋됩니다";
+
+    const qint64 days = secs / 86400;
+    const qint64 hours = (secs % 86400) / 3600;
+    const qint64 mins = (secs % 3600) / 60;
+
+    if (days > 0)
+        return QString("리셋까지 %1d %2h").arg(days).arg(hours);
+    if (hours > 0)
+        return QString("리셋까지 %1h %2m").arg(hours).arg(mins);
+    return QString("리셋까지 %1m").arg(mins);
+}
+
+QString TrayApp::formatClockTime(const QDateTime &timestamp) const
+{
+    if (!timestamp.isValid())
+        return "--:--:--";
+    return timestamp.toLocalTime().toString("HH:mm:ss");
+}
+
+QString TrayApp::buildTimingText() const
+{
+    return QString("마지막 API 성공: %1 | 다음 자동 갱신: %2")
+        .arg(formatClockTime(m_lastSuccessfulApiFetchAt))
+        .arg(formatClockTime(m_apiClient->nextScheduledFetchAt()));
+}
