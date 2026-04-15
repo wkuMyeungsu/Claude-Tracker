@@ -1,6 +1,5 @@
 #include "usagepopup.h"
 #include "quotapanel.h"
-#include "statusled.h"
 #include <QApplication>
 #include <QDialog>
 #include <QEasingCurve>
@@ -14,6 +13,8 @@
 #include <QScreen>
 #include <QTimer>
 #include <QVBoxLayout>
+
+// ... QuitConfirmDialog 클래스 내용은 동일하므로 중략 (실제로는 포함됨) ...
 
 // ── 종료 확인 다이얼로그 (UsagePopup과 동일한 UI 스타일) ─────────────────────
 class QuitConfirmDialog : public QDialog
@@ -136,10 +137,60 @@ UsagePopup::UsagePopup(QWidget *parent)
     auto *titleRow = new QHBoxLayout(m_titleBar);
     titleRow->setContentsMargins(12, 0, 8, 0);
 
-    m_led = new StatusLed;
+    m_pinBtn = new QPushButton;
+    m_pinBtn->setFixedSize(14, 14);
+    m_pinBtn->setCheckable(true);
+    m_pinBtn->setChecked(true);   // 초기값: 핀 ON (WindowStaysOnTopHint와 동일)
+    m_pinBtn->setCursor(Qt::PointingHandCursor);
+    m_pinBtn->setToolTip("항상 위에 표시");
+    m_pinBtn->setStyleSheet(R"(
+        QPushButton {
+            background: #666;
+            border: none;
+            border-radius: 7px;
+        }
+        QPushButton:checked {
+            background: #f39c12;
+        }
+        QPushButton:hover {
+            background: #f39c12;
+            opacity: 0.8;
+        }
+    )");
+
+    connect(m_pinBtn, &QPushButton::toggled, this, [this](bool pinned) {
+        Qt::WindowFlags flags = windowFlags();
+        if (pinned)
+            flags |= Qt::WindowStaysOnTopHint;
+        else
+            flags &= ~Qt::WindowStaysOnTopHint;
+        setWindowFlags(flags);
+        show();   // setWindowFlags() 호출 시 창이 숨겨지므로 재호출 필수
+        raise();
+        // setWindowFlags()가 hideEvent를 트리거해 opacity를 1.0으로 리셋함
+        // idle 상태였다면 핀 ON 시에만 다시 투명화
+        if (pinned && m_opacityAtIdle)
+            QTimer::singleShot(300, this, [this]() {
+                if (isVisible() && m_pinBtn->isChecked() && m_opacityAtIdle)
+                    animateOpacityTo(0.6);
+            });
+    });
 
     auto *titleLabel = new QLabel("Claude Code Usage");
     titleLabel->setStyleSheet("color: white; font-weight: bold; font-size: 12px;");
+
+    m_activityPill = new QLabel("● 토큰 발생");
+    m_activityPill->setStyleSheet(
+        "background: rgba(46, 204, 113, 0.2);"
+        "color: #2ecc71;"
+        "border: 1px solid #2ecc71;"
+        "border-radius: 10px;"
+        "padding: 0px 8px;"
+        "font-size: 10px;"
+        "font-weight: bold;"
+    );
+    m_activityPill->setFixedHeight(20);
+    m_activityPill->hide(); // 초기에는 숨김
 
     const QString btnBase = R"(
         QPushButton {
@@ -178,21 +229,12 @@ UsagePopup::UsagePopup(QWidget *parent)
             emit quitRequested();
     });
 
-    m_activityPill = new QLabel("● 토큰 발생");
-    m_activityPill->setStyleSheet(
-        "color: #7dde7d;"
-        "background: rgba(52,199,89,0.15);"
-        "font-size: 9px;"
-        "padding: 1px 6px;"
-        "border-radius: 7px;");
-    m_activityPill->hide();
-
-    titleRow->addWidget(m_led);
+    titleRow->addWidget(m_pinBtn);
     titleRow->addSpacing(6);
     titleRow->addWidget(titleLabel);
     titleRow->addStretch();
     titleRow->addWidget(m_activityPill);
-    titleRow->addSpacing(4);
+    titleRow->addSpacing(6);
     titleRow->addWidget(minimizeBtn);
     titleRow->addWidget(closeBtn);
 
@@ -200,13 +242,13 @@ UsagePopup::UsagePopup(QWidget *parent)
     sep1->setFrameShape(QFrame::HLine);
     sep1->setStyleSheet("color: #444;");
 
-    m_panel5h = new QuotaPanel("5시간 사용량");
+    m_panel5h = new QuotaPanel("5h 사용량");
 
     auto *sep2 = new QFrame;
     sep2->setFrameShape(QFrame::HLine);
     sep2->setStyleSheet("color: #ddd;");
 
-    m_panel7d = new QuotaPanel("7일 사용량");
+    m_panel7d = new QuotaPanel("7d 사용량");
 
     auto *sep3 = new QFrame;
     sep3->setFrameShape(QFrame::HLine);
@@ -352,7 +394,7 @@ bool UsagePopup::eventFilter(QObject *obj, QEvent *event)
         if (me->button() == Qt::LeftButton) {
             m_isDragging = false;
             applyPending();
-            if (m_wasOpacityIdleBeforeDrag) animateOpacityTo(0.6);  // 투명도만 복원
+            if (m_wasOpacityIdleBeforeDrag && m_pinBtn->isChecked()) animateOpacityTo(0.6);  // 핀 고정 시만 복원
             return true;
         }
     }
@@ -364,7 +406,6 @@ void UsagePopup::setActive()
 {
     m_idleMode      = false;
     m_opacityAtIdle = false;
-    m_led->setActive();
     m_activityPill->show();
     // 이미 불투명이거나 불투명 방향으로 진행 중이면 스킵
     if (windowOpacity() >= 1.0 && m_opacityAnim->endValue().toDouble() >= 1.0)
@@ -377,11 +418,11 @@ void UsagePopup::setIdle()
     if (m_idleMode) return;  // 이미 페이드 중이거나 idle 상태 → 중복 호출 무시
     m_idleMode = true;
     m_activityPill->hide();
-    m_led->setIdle();  // 10초 페이드 시작
 
-    // LED 페이드 완료 시점(10초)에 맞춰 직접 투명화 — signal 체인보다 확실
+    // LED 페이드 완료 시점(10초)에 맞춰 직접 투명화 — 핀 고정 상태일 때만
     QTimer::singleShot(10'000, this, [this]() {
         if (!m_idleMode) return;  // 그 사이 setActive() 호출됐으면 무시
+        if (!m_pinBtn->isChecked()) return;  // 고정 해제 모드엔 투명도 적용 안 함
         m_opacityAtIdle = true;
         if (isVisible())
             animateOpacityTo(0.6);
@@ -426,7 +467,7 @@ void UsagePopup::showNearTray(const QPoint &trayPos)
     raise();
     activateWindow();
 
-    // 팝업이 닫혀 있는 사이에 LED가 이미 회색이 된 경우 → 0.5초 후 투명 적용
-    if (m_opacityAtIdle)
-        QTimer::singleShot(500, this, [this]() { if (isVisible()) animateOpacityTo(0.6); });
+    // 팝업이 닫혀 있는 사이에 LED가 이미 회색이 된 경우 → 핀 고정 시만 0.5초 후 투명 적용
+    if (m_opacityAtIdle && m_pinBtn->isChecked())
+        QTimer::singleShot(500, this, [this]() { if (isVisible() && m_pinBtn->isChecked()) animateOpacityTo(0.6); });
 }

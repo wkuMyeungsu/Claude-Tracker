@@ -129,16 +129,10 @@ void TrayApp::applyData(const UsageData &data)
     m_popup->setTimingText(buildTimingText());
 
     QString status;
-    if (data.fromApi) {
-        status = "API 기준값";
-    } else if (m_hasLastApiData) {
-        status = "API 기준 + 로컬 증분 추정";
-    } else {
-        status = "로컬 추정값";
-    }
-
     if (!m_lastFetchError.isEmpty())
-        status += QString(" (최근 API 실패: %1)").arg(m_lastFetchError);
+        status = QString("API 실패: %1").arg(m_lastFetchError);
+    else if (!m_hasLastApiData)
+        status = "로컬 추정값";
     m_popup->setStatus(status);
 
     m_tray->setIcon(makeIcon(data.fiveHour.utilization));
@@ -238,11 +232,11 @@ QIcon TrayApp::makeIcon(double utilization)
 QString TrayApp::formatCountdown(const QDateTime &resetsAt) const
 {
     if (!resetsAt.isValid())
-        return "리셋 시각 정보 없음";
+        return "초기화 시각 정보 없음";
 
     const qint64 secs = QDateTime::currentDateTimeUtc().secsTo(resetsAt.toUTC());
     if (secs <= 0)
-        return "곧 리셋됩니다";
+        return "곧 초기화됩니다";
 
     const qint64 days  = secs / 86400;
     const qint64 hours = (secs % 86400) / 3600;
@@ -252,13 +246,12 @@ QString TrayApp::formatCountdown(const QDateTime &resetsAt) const
     const QString clock   = local.toString("HH:mm");
 
     if (days > 0) {
-        // 7일 리셋: 몇 월 며칠 무슨 요일인지 함께 표시
         const QString fullClock = QLocale::system().toString(local, "M/d ddd HH:mm");
-        return QString("리셋까지 %1일 %2시간  (%3 리셋)").arg(days).arg(hours).arg(fullClock);
+        return QString("%1d %2h 후 초기화 (%3)").arg(days).arg(hours).arg(fullClock);
     }
     if (hours > 0)
-        return QString("리셋까지 %1시간 %2분  (%3 리셋)").arg(hours).arg(mins).arg(clock);
-    return QString("리셋까지 %1분  (%2 리셋)").arg(mins).arg(clock);
+        return QString("%1h %2m 후 초기화 (%3)").arg(hours).arg(mins).arg(clock);
+    return QString("%1m 후 초기화 (%2)").arg(mins).arg(clock);
 }
 
 QString TrayApp::formatClockTime(const QDateTime &timestamp) const
@@ -270,9 +263,12 @@ QString TrayApp::formatClockTime(const QDateTime &timestamp) const
 
 QString TrayApp::buildTimingText() const
 {
-    return QString("마지막 API 성공: %1 | 다음 자동 갱신: %2")
-        .arg(formatClockTime(m_lastSuccessfulApiFetchAt))
-        .arg(formatClockTime(m_apiClient->nextScheduledFetchAt()));
+    auto toHHmm = [](const QDateTime &dt) -> QString {
+        return dt.isValid() ? dt.toLocalTime().toString("HH:mm") : "--:--";
+    };
+    return QString("최근 업데이트: %1 | 다음 갱신: %2")
+        .arg(toHHmm(m_lastSuccessfulApiFetchAt))
+        .arg(toHHmm(m_apiClient->nextScheduledFetchAt()));
 }
 
 void TrayApp::onActivityDetected()

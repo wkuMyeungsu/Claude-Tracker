@@ -21,8 +21,6 @@ set(PROJECT_SOURCES
     usageapiclient.cpp
     usagescanner.h
     usagescanner.cpp
-    statusled.h
-    statusled.cpp
     quotapanel.h
     quotapanel.cpp
     trayapp.h

@@ -30,7 +30,7 @@ QuotaPanel::QuotaPanel(const QString &title, QWidget *parent)
     m_bar->setRange(0, 100);
     m_bar->setValue(0);
     m_bar->setTextVisible(false);
-    m_bar->setFixedHeight(10);
+    m_bar->setFixedHeight(12);
     m_bar->setStyleSheet(barStyle(0));
 
     // 리셋 카운트다운
@@ -80,9 +80,9 @@ void QuotaPanel::setCountdown(const QString &text)
 QString QuotaPanel::barStyle(int pct)
 {
     QString color;
-    if (pct < 50)      color = "#28a745"; // 녹색
-    else if (pct < 80) color = "#ffc107"; // 노란색
-    else               color = "#dc3545"; // 빨간색
+    if (pct <= 70)      color = "#28a745"; // 녹색 (0~70%)
+    else if (pct <= 85) color = "#ffc107"; // 노란색 (71~85%)
+    else                color = "#dc3545"; // 빨간색 (86~100%)
 
     return QString(R"(
         QProgressBar {
