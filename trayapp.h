@@ -20,9 +20,11 @@ public:
 private slots:
     void onUsageFetched(UsageData data);
     void onFetchFailed(QString reason);
-    void onLocalUsage(UsageData data);
+    void onLocalUsage(UsageData full, UsageData delta, bool hasDelta);
     void updateCountdowns();
     void onTrayActivated(QSystemTrayIcon::ActivationReason reason);
+    void onActivityDetected();
+    void onActivityTimeout();
 
 private:
     void applyData(const UsageData &data);
@@ -43,8 +45,10 @@ private:
     QTimer *m_countdownTimer = nullptr;
     QDateTime m_lastSuccessfulApiFetchAt;
     QString m_lastFetchError;
-    bool m_apiFailed = false;
-    bool m_hasLastApiData = false;
+    bool    m_apiFailed      = false;
+    bool    m_hasLastApiData = false;
+    QTimer *m_activityTimer  = nullptr;
+    bool    m_isActive       = false;  // 토큰 사용 중 여부
 };
 
 #endif // TRAYAPP_H

@@ -1,10 +1,14 @@
 #include "usagepopup.h"
 #include "quotapanel.h"
+#include "statusled.h"
 #include <QApplication>
+#include <QEasingCurve>
 #include <QFrame>
 #include <QHBoxLayout>
+#include <QHideEvent>
 #include <QLabel>
 #include <QMouseEvent>
+#include <QPropertyAnimation>
 #include <QPushButton>
 #include <QScreen>
 #include <QVBoxLayout>
@@ -27,6 +31,8 @@ UsagePopup::UsagePopup(QWidget *parent)
     auto *titleRow = new QHBoxLayout(m_titleBar);
     titleRow->setContentsMargins(12, 0, 8, 0);
 
+    m_led = new StatusLed;
+
     auto *titleLabel = new QLabel("Claude Code Usage");
     titleLabel->setStyleSheet("color: white; font-weight: bold; font-size: 12px;");
 
@@ -48,6 +54,8 @@ UsagePopup::UsagePopup(QWidget *parent)
     )");
     connect(closeBtn, &QPushButton::clicked, this, &QWidget::hide);
 
+    titleRow->addWidget(m_led);
+    titleRow->addSpacing(6);
     titleRow->addWidget(titleLabel);
     titleRow->addStretch();
     titleRow->addWidget(closeBtn);
@@ -113,28 +121,83 @@ UsagePopup::UsagePopup(QWidget *parent)
     root->addWidget(footer);
 
     setStyleSheet("QWidget { background: white; }");
+
+    m_opacityAnim = new QPropertyAnimation(this, "windowOpacity", this);
+    m_opacityAnim->setDuration(300);
+    m_opacityAnim->setEasingCurve(QEasingCurve::InOutQuad);
 }
 
 void UsagePopup::setData(const UsageData &data)
 {
-    m_panel5h->setData(data.fiveHour);
-    m_panel7d->setData(data.sevenDay);
+    if (m_isDragging) {
+        m_pendingData     = data;
+        m_hasPendingData  = true;
+        return;
+    }
+    applyDataInternal(data);
 }
 
 void UsagePopup::setCountdowns(const QString &c5h, const QString &c7d)
 {
-    m_panel5h->setCountdown(c5h);
-    m_panel7d->setCountdown(c7d);
+    if (m_isDragging) {
+        m_pendingC5h  = c5h;
+        m_pendingC7d  = c7d;
+        m_hasPendingCD = true;
+        return;
+    }
+    applyCountdownsInternal(c5h, c7d);
 }
 
 void UsagePopup::setStatus(const QString &text)
 {
+    if (m_isDragging) {
+        m_pendingStatus     = text;
+        m_hasPendingStatus  = true;
+        return;
+    }
     m_statusLabel->setText(text);
 }
 
 void UsagePopup::setTimingText(const QString &text)
 {
+    if (m_isDragging) {
+        m_pendingTiming     = text;
+        m_hasPendingTiming  = true;
+        return;
+    }
     m_timingLabel->setText(text);
+}
+
+void UsagePopup::applyDataInternal(const UsageData &data)
+{
+    m_panel5h->setData(data.fiveHour);
+    m_panel7d->setData(data.sevenDay);
+}
+
+void UsagePopup::applyCountdownsInternal(const QString &c5h, const QString &c7d)
+{
+    m_panel5h->setCountdown(c5h);
+    m_panel7d->setCountdown(c7d);
+}
+
+void UsagePopup::applyPending()
+{
+    if (m_hasPendingData) {
+        applyDataInternal(m_pendingData);
+        m_hasPendingData = false;
+    }
+    if (m_hasPendingCD) {
+        applyCountdownsInternal(m_pendingC5h, m_pendingC7d);
+        m_hasPendingCD = false;
+    }
+    if (m_hasPendingStatus) {
+        m_statusLabel->setText(m_pendingStatus);
+        m_hasPendingStatus = false;
+    }
+    if (m_hasPendingTiming) {
+        m_timingLabel->setText(m_pendingTiming);
+        m_hasPendingTiming = false;
+    }
 }
 
 bool UsagePopup::eventFilter(QObject *obj, QEvent *event)
@@ -145,7 +208,9 @@ bool UsagePopup::eventFilter(QObject *obj, QEvent *event)
     if (event->type() == QEvent::MouseButtonPress) {
         auto *me = static_cast<QMouseEvent *>(event);
         if (me->button() == Qt::LeftButton) {
-            m_dragPos = me->globalPosition().toPoint() - frameGeometry().topLeft();
+            m_dragPos    = me->globalPosition().toPoint() - frameGeometry().topLeft();
+            m_isDragging = true;
+            setActive();    // 드래그 중 항상 불투명
             return true;
         }
     } else if (event->type() == QEvent::MouseMove) {
@@ -154,9 +219,45 @@ bool UsagePopup::eventFilter(QObject *obj, QEvent *event)
             move(me->globalPosition().toPoint() - m_dragPos);
             return true;
         }
+    } else if (event->type() == QEvent::MouseButtonRelease) {
+        auto *me = static_cast<QMouseEvent *>(event);
+        if (me->button() == Qt::LeftButton) {
+            m_isDragging = false;
+            applyPending();
+            if (m_idleMode) setIdle();  // idle 상태였으면 0.6으로 복원
+            return true;
+        }
     }
 
     return QWidget::eventFilter(obj, event);
+}
+
+void UsagePopup::setActive()
+{
+    m_idleMode = false;
+    m_led->setActive();          // 팝업 비가시 상태에서도 LED 상태 유지
+    m_opacityAnim->stop();
+    m_opacityAnim->setStartValue(windowOpacity());
+    m_opacityAnim->setEndValue(1.0);
+    m_opacityAnim->start();
+}
+
+void UsagePopup::setIdle()
+{
+    m_idleMode = true;
+    m_led->setIdle();            // 팝업 비가시 상태에서도 30초 페이드 시작
+    if (!isVisible()) return;    // 투명도는 보일 때만
+    m_opacityAnim->stop();
+    m_opacityAnim->setStartValue(windowOpacity());
+    m_opacityAnim->setEndValue(0.6);
+    m_opacityAnim->start();
+}
+
+void UsagePopup::hideEvent(QHideEvent *event)
+{
+    m_opacityAnim->stop();
+    setWindowOpacity(1.0);  // 다음 show() 시 항상 불투명에서 시작
+    QWidget::hideEvent(event);
 }
 
 void UsagePopup::showNearTray(const QPoint &trayPos)
@@ -177,6 +278,7 @@ void UsagePopup::showNearTray(const QPoint &trayPos)
     x = qBound(avail.left(), x, avail.right() - w);
     y = qBound(avail.top(), y, avail.bottom() - h);
 
+    setWindowOpacity(1.0);  // 항상 불투명하게 시작
     move(x, y);
     show();
     raise();

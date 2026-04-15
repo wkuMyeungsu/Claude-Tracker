@@ -5,12 +5,14 @@
 #include <QDirIterator>
 #include <QFile>
 #include <QFileSystemWatcher>
+#include <QFutureWatcher>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QMap>
 #include <QSet>
 #include <QTimer>
 #include <QVector>
+#include <QtConcurrent>
 #include <algorithm>
 
 namespace {
@@ -25,6 +27,9 @@ const QMap<QString, qint64> PLAN_LIMITS_7D = {
     {"max_5x", 720'000'000LL},
     {"max_20x", 2'880'000'000LL},
 };
+
+static constexpr int DEBOUNCE_MS      = 2000;  // 파일 변경 디바운스 간격
+static constexpr int WATCHLIST_MS     = 5 * 60 * 1000;  // 감시 목록 갱신 간격
 }
 
 struct TokenRecord {
@@ -35,17 +40,24 @@ struct TokenRecord {
 UsageScanner::UsageScanner(QObject *parent)
     : QObject(parent)
     , m_watcher(new QFileSystemWatcher(this))
+    , m_debounceTimer(new QTimer(this))
 {
     connect(m_watcher, &QFileSystemWatcher::directoryChanged,
             this, &UsageScanner::onDirectoryChanged);
     connect(m_watcher, &QFileSystemWatcher::fileChanged,
             this, &UsageScanner::onFileChanged);
 
+    // 디바운스: 2초 동안 추가 이벤트가 없을 때만 스캔 실행
+    m_debounceTimer->setSingleShot(true);
+    m_debounceTimer->setInterval(DEBOUNCE_MS);
+    connect(m_debounceTimer, &QTimer::timeout, this, &UsageScanner::doScan);
+
     refreshWatchList();
 
-    auto *timer = new QTimer(this);
-    connect(timer, &QTimer::timeout, this, &UsageScanner::refreshWatchList);
-    timer->start(5 * 60 * 1000);
+    // 5분마다 새 프로젝트 폴더 자동 감지 (QFileSystemWatcher 재귀 불가 우회)
+    auto *watchTimer = new QTimer(this);
+    connect(watchTimer, &QTimer::timeout, this, &UsageScanner::refreshWatchList);
+    watchTimer->start(WATCHLIST_MS);
 }
 
 void UsageScanner::setWindowHints(const QDateTime &reset5h, const QDateTime &reset7d)
@@ -54,6 +66,26 @@ void UsageScanner::setWindowHints(const QDateTime &reset5h, const QDateTime &res
         m_lastKnownReset5h = reset5h;
     if (reset7d.isValid())
         m_lastKnownReset7d = reset7d;
+}
+
+void UsageScanner::setDeltaStart(const QDateTime &since)
+{
+    m_deltaStart = since.toUTC();
+}
+
+// ── 파일 감시 이벤트 ──────────────────────────────────────────────────────────
+
+void UsageScanner::onDirectoryChanged(const QString &)
+{
+    refreshWatchList();
+    emit activityDetected();    // 즉시 알림 (투명도 제어용)
+    m_debounceTimer->start();   // 타이머 리셋: 2초 후 스캔
+}
+
+void UsageScanner::onFileChanged(const QString &)
+{
+    emit activityDetected();    // 즉시 알림 (투명도 제어용)
+    m_debounceTimer->start();   // 타이머 리셋: 2초 후 스캔
 }
 
 void UsageScanner::refreshWatchList()
@@ -80,16 +112,47 @@ void UsageScanner::refreshWatchList()
     }
 }
 
-void UsageScanner::onDirectoryChanged(const QString &)
+// ── 백그라운드 스캔 ───────────────────────────────────────────────────────────
+
+void UsageScanner::doScan()
 {
-    refreshWatchList();
-    emit localUsageUpdated(calcFromLocal());
+    if (m_scanPending) {
+        // 이전 스캔이 아직 진행 중 → 완료 후 재시도
+        m_debounceTimer->start();
+        return;
+    }
+    m_scanPending = true;
+
+    // 멤버 변수를 람다에 복사 (스레드 안전)
+    const QDateTime hint5h     = m_lastKnownReset5h;
+    const QDateTime hint7d     = m_lastKnownReset7d;
+    const QDateTime deltaStart = m_deltaStart;
+    const bool      hasDelta   = deltaStart.isValid();
+
+    using ResultPair = QPair<UsageData, UsageData>;
+    auto *watcher = new QFutureWatcher<ResultPair>(this);
+
+    connect(watcher, &QFutureWatcher<ResultPair>::finished,
+            this, [this, watcher, hasDelta]() {
+        m_scanPending = false;
+        const auto result = watcher->result();
+        emit localUsageUpdated(result.first, result.second, hasDelta);
+        watcher->deleteLater();
+    });
+
+    QFuture<ResultPair> future =
+        QtConcurrent::run([hint5h, hint7d, deltaStart, hasDelta]() -> ResultPair {
+            UsageData full  = calcUsageForRange(QDateTime(), hint5h, hint7d);
+            UsageData delta = hasDelta
+                ? calcUsageForRange(deltaStart, hint5h, hint7d)
+                : full;
+            return {full, delta};
+        });
+
+    watcher->setFuture(future);
 }
 
-void UsageScanner::onFileChanged(const QString &)
-{
-    emit localUsageUpdated(calcFromLocal());
-}
+// ── 플랜 한도 ────────────────────────────────────────────────────────────────
 
 qint64 UsageScanner::planLimit5h()
 {
@@ -101,17 +164,23 @@ qint64 UsageScanner::planLimit7d()
     return PLAN_LIMITS_7D.value(CredentialsReader::subscriptionType(), 0);
 }
 
+// ── 메인 스레드 직접 호출용 (onFetchFailed 경로) ──────────────────────────────
+
 UsageData UsageScanner::calcFromLocal() const
 {
-    return calcUsageForRange(QDateTime());
+    return calcUsageForRange(QDateTime(), m_lastKnownReset5h, m_lastKnownReset7d);
 }
 
 UsageData UsageScanner::calcDeltaFromLocal(const QDateTime &sinceUtc) const
 {
-    return calcUsageForRange(sinceUtc.toUTC());
+    return calcUsageForRange(sinceUtc.toUTC(), m_lastKnownReset5h, m_lastKnownReset7d);
 }
 
-UsageData UsageScanner::calcUsageForRange(const QDateTime &rangeStartUtc) const
+// ── 핵심 스캔 로직 (static: 멤버 변수 미접근 → 스레드 안전) ─────────────────────
+
+UsageData UsageScanner::calcUsageForRange(const QDateTime &rangeStartUtc,
+                                           const QDateTime &reset5h,
+                                           const QDateTime &reset7d)
 {
     const QString projectsDir = CredentialsReader::claudeDir() + "/projects";
     QSet<QString> seenUuids;
@@ -132,6 +201,7 @@ UsageData UsageScanner::calcUsageForRange(const QDateTime &rangeStartUtc) const
             if (obj["type"].toString() != "assistant")
                 continue;
 
+            // uuid 로 중복 레코드 제거
             const QString uid = obj["uuid"].toString();
             if (!uid.isEmpty()) {
                 if (seenUuids.contains(uid))
@@ -181,8 +251,8 @@ UsageData UsageScanner::calcUsageForRange(const QDateTime &rangeStartUtc) const
     }
 
     const QString planType = CredentialsReader::subscriptionType();
-    const qint64 limit5h = planLimit5h();
-    const qint64 limit7d = planLimit7d();
+    const qint64 limit5h = PLAN_LIMITS_5H.value(planType, 0);
+    const qint64 limit7d = PLAN_LIMITS_7D.value(planType, 0);
 
     qDebug() << "[UsageScanner] plan=" << planType
              << "deltaMode=" << deltaMode
@@ -192,27 +262,27 @@ UsageData UsageScanner::calcUsageForRange(const QDateTime &rangeStartUtc) const
              << "limit7d=" << limit7d;
 
     UsageData data;
-    data.fromApi = false;
+    data.fromApi  = false;
     data.fetchedAt = QDateTime::currentDateTime();
 
     if (rolling5hTokens > 0 || limit5h > 0) {
-        data.fiveHour.rawTokens = rolling5hTokens;
+        data.fiveHour.rawTokens   = rolling5hTokens;
         data.fiveHour.limitTokens = limit5h;
-        data.fiveHour.resetsAt =
-            (m_lastKnownReset5h.isValid() && m_lastKnownReset5h > now) ? m_lastKnownReset5h : QDateTime();
-        data.fiveHour.valid = true;
+        data.fiveHour.resetsAt    = (reset5h.isValid() && reset5h > now) ? reset5h : QDateTime();
+        data.fiveHour.valid       = true;
         if (limit5h > 0)
-            data.fiveHour.utilization = qMin(1.0, static_cast<double>(rolling5hTokens) / static_cast<double>(limit5h));
+            data.fiveHour.utilization = qMin(1.0, static_cast<double>(rolling5hTokens) /
+                                                  static_cast<double>(limit5h));
     }
 
     if (rolling7dTokens > 0 || limit7d > 0) {
-        data.sevenDay.rawTokens = rolling7dTokens;
+        data.sevenDay.rawTokens   = rolling7dTokens;
         data.sevenDay.limitTokens = limit7d;
-        data.sevenDay.resetsAt =
-            (m_lastKnownReset7d.isValid() && m_lastKnownReset7d > now) ? m_lastKnownReset7d : QDateTime();
-        data.sevenDay.valid = true;
+        data.sevenDay.resetsAt    = (reset7d.isValid() && reset7d > now) ? reset7d : QDateTime();
+        data.sevenDay.valid       = true;
         if (limit7d > 0)
-            data.sevenDay.utilization = qMin(1.0, static_cast<double>(rolling7dTokens) / static_cast<double>(limit7d));
+            data.sevenDay.utilization = qMin(1.0, static_cast<double>(rolling7dTokens) /
+                                                  static_cast<double>(limit7d));
     }
 
     return data;

@@ -9,8 +9,8 @@ set(CMAKE_AUTORCC ON)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-find_package(QT NAMES Qt6 Qt5 REQUIRED COMPONENTS Widgets Network)
-find_package(Qt${QT_VERSION_MAJOR} REQUIRED COMPONENTS Widgets Network)
+find_package(QT NAMES Qt6 Qt5 REQUIRED COMPONENTS Widgets Network Concurrent)
+find_package(Qt${QT_VERSION_MAJOR} REQUIRED COMPONENTS Widgets Network Concurrent)
 
 set(PROJECT_SOURCES
     main.cpp
@@ -21,6 +21,8 @@ set(PROJECT_SOURCES
     usageapiclient.cpp
     usagescanner.h
     usagescanner.cpp
+    statusled.h
+    statusled.cpp
     quotapanel.h
     quotapanel.cpp
     trayapp.h
@@ -43,8 +45,9 @@ else()
 endif()
 
 target_link_libraries(ClaudeTray PRIVATE
-    Qt${QT_VERSION_MAJOR}::Widgets   # QSystemTrayIcon, QMenu, QProgressBar
-    Qt${QT_VERSION_MAJOR}::Network   # QNetworkAccessManager
+    Qt${QT_VERSION_MAJOR}::Widgets      # QSystemTrayIcon, QMenu, QProgressBar
+    Qt${QT_VERSION_MAJOR}::Network      # QNetworkAccessManager
+    Qt${QT_VERSION_MAJOR}::Concurrent   # QtConcurrent::run (백그라운드 JSONL 스캔)
 )
 
 set_target_properties(ClaudeTray PROPERTIES

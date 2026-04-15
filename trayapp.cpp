@@ -36,6 +36,13 @@ TrayApp::TrayApp(QObject *parent)
             this, &TrayApp::onFetchFailed);
     connect(m_scanner, &UsageScanner::localUsageUpdated,
             this, &TrayApp::onLocalUsage);
+    connect(m_scanner, &UsageScanner::activityDetected,
+            this, &TrayApp::onActivityDetected);
+
+    m_activityTimer = new QTimer(this);
+    m_activityTimer->setSingleShot(true);
+    m_activityTimer->setInterval(10 * 1000);  // 10초 조용하면 idle
+    connect(m_activityTimer, &QTimer::timeout, this, &TrayApp::onActivityTimeout);
 
     connect(m_countdownTimer, &QTimer::timeout,
             this, &TrayApp::updateCountdowns);
@@ -47,10 +54,14 @@ void TrayApp::onTrayActivated(QSystemTrayIcon::ActivationReason reason)
     if (reason == QSystemTrayIcon::Context)
         return;
 
-    if (m_popup->isVisible())
+    if (m_popup->isVisible()) {
         m_popup->hide();
-    else
+    } else {
         m_popup->showNearTray(QCursor::pos());
+        // 이미 idle 상태라면 팝업 열린 후 0.5초 뒤 페이드
+        if (!m_isActive)
+            QTimer::singleShot(500, m_popup, &UsagePopup::setIdle);
+    }
 }
 
 void TrayApp::onUsageFetched(UsageData data)
@@ -63,6 +74,7 @@ void TrayApp::onUsageFetched(UsageData data)
     m_lastSuccessfulApiFetchAt = data.fetchedAt;
 
     m_scanner->setWindowHints(data.fiveHour.resetsAt, data.sevenDay.resetsAt);
+    m_scanner->setDeltaStart(data.fetchedAt);   // 다음 로컬 스캔의 델타 기준 시각
     applyData(data);
 }
 
@@ -78,11 +90,12 @@ void TrayApp::onFetchFailed(QString reason)
     applyData(local);
 }
 
-void TrayApp::onLocalUsage(UsageData data)
+// full, delta 는 백그라운드 스캔에서 이미 계산된 결과 → 메인 스레드 재스캔 없음
+void TrayApp::onLocalUsage(UsageData full, UsageData delta, bool hasDelta)
 {
-    const UsageData merged = m_hasLastApiData
-        ? mergeWithLastApi(m_scanner->calcDeltaFromLocal(m_lastApiData.fetchedAt.toUTC()))
-        : data;
+    const UsageData merged = (m_hasLastApiData && hasDelta)
+        ? mergeWithLastApi(delta)
+        : full;
     m_current = merged;
     applyData(merged);
 }
@@ -200,15 +213,21 @@ QString TrayApp::formatCountdown(const QDateTime &resetsAt) const
     if (secs <= 0)
         return "곧 리셋됩니다";
 
-    const qint64 days = secs / 86400;
+    const qint64 days  = secs / 86400;
     const qint64 hours = (secs % 86400) / 3600;
-    const qint64 mins = (secs % 3600) / 60;
+    const qint64 mins  = (secs % 3600) / 60;
 
-    if (days > 0)
-        return QString("리셋까지 %1d %2h").arg(days).arg(hours);
+    const QDateTime local = resetsAt.toLocalTime();
+    const QString clock   = local.toString("HH:mm");
+
+    if (days > 0) {
+        // 7일 리셋: 몇 월 며칠 무슨 요일인지 함께 표시
+        const QString fullClock = QLocale::system().toString(local, "M/d ddd HH:mm");
+        return QString("리셋까지 %1d %2h  (%3 리셋)").arg(days).arg(hours).arg(fullClock);
+    }
     if (hours > 0)
-        return QString("리셋까지 %1h %2m").arg(hours).arg(mins);
-    return QString("리셋까지 %1m").arg(mins);
+        return QString("리셋까지 %1h %2m  (%3 리셋)").arg(hours).arg(mins).arg(clock);
+    return QString("리셋까지 %1m  (%2 리셋)").arg(mins).arg(clock);
 }
 
 QString TrayApp::formatClockTime(const QDateTime &timestamp) const
@@ -223,4 +242,17 @@ QString TrayApp::buildTimingText() const
     return QString("마지막 API 성공: %1 | 다음 자동 갱신: %2")
         .arg(formatClockTime(m_lastSuccessfulApiFetchAt))
         .arg(formatClockTime(m_apiClient->nextScheduledFetchAt()));
+}
+
+void TrayApp::onActivityDetected()
+{
+    m_isActive = true;
+    m_activityTimer->start();   // 10초 타이머 리셋
+    m_popup->setActive();       // 불투명으로 전환
+}
+
+void TrayApp::onActivityTimeout()
+{
+    m_isActive = false;
+    m_popup->setIdle();         // 0.6 투명으로 페이드 (팝업이 보일 때만)
 }
