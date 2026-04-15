@@ -208,9 +208,10 @@ bool UsagePopup::eventFilter(QObject *obj, QEvent *event)
     if (event->type() == QEvent::MouseButtonPress) {
         auto *me = static_cast<QMouseEvent *>(event);
         if (me->button() == Qt::LeftButton) {
-            m_dragPos    = me->globalPosition().toPoint() - frameGeometry().topLeft();
-            m_isDragging = true;
-            setActive();    // 드래그 중 항상 불투명
+            m_dragPos           = me->globalPosition().toPoint() - frameGeometry().topLeft();
+            m_isDragging        = true;
+            m_wasIdleBeforeDrag = m_idleMode;  // setActive() 호출 전에 저장
+            setActive();
             return true;
         }
     } else if (event->type() == QEvent::MouseMove) {
@@ -224,7 +225,7 @@ bool UsagePopup::eventFilter(QObject *obj, QEvent *event)
         if (me->button() == Qt::LeftButton) {
             m_isDragging = false;
             applyPending();
-            if (m_idleMode) setIdle();  // idle 상태였으면 0.6으로 복원
+            if (m_wasIdleBeforeDrag) setIdle();  // 클릭 전 idle 이었으면 복원
             return true;
         }
     }

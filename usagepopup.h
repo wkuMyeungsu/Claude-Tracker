@@ -44,8 +44,9 @@ private:
     QWidget    *m_titleBar   = nullptr;
     QPoint      m_dragPos;
 
-    QPropertyAnimation *m_opacityAnim = nullptr;
-    bool                m_idleMode   = false;  // setIdle() 호출 시 true
+    QPropertyAnimation *m_opacityAnim      = nullptr;
+    bool                m_idleMode         = false;  // setIdle() 호출 시 true
+    bool                m_wasIdleBeforeDrag = false; // 클릭 직전 idle 상태 저장
     StatusLed          *m_led        = nullptr;
 
     // 드래그 중 UI 업데이트 억제
