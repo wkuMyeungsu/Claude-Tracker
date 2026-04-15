@@ -244,11 +244,11 @@ bool UsagePopup::eventFilter(QObject *obj, QEvent *event)
 void UsagePopup::setActive()
 {
     m_idleMode = false;
-    m_led->setActive();          // 팝업 비가시 상태에서도 LED 상태 유지
-    m_opacityAnim->stop();
-    m_opacityAnim->setStartValue(windowOpacity());
-    m_opacityAnim->setEndValue(1.0);
-    m_opacityAnim->start();
+    m_led->setActive();
+    // 이미 불투명이거나 불투명 방향으로 진행 중이면 스킵
+    if (windowOpacity() >= 1.0 && m_opacityAnim->endValue().toDouble() >= 1.0)
+        return;
+    animateOpacityTo(1.0);
 }
 
 void UsagePopup::setIdle()
