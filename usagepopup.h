@@ -6,6 +6,7 @@
 
 class QLabel;
 class QPropertyAnimation;
+class QGraphicsOpacityEffect;
 class QuotaPanel;
 class QWidget;
 class QPushButton;
@@ -19,7 +20,6 @@ public:
     void setData(const UsageData &data);
     void setCountdowns(const QString &c5h, const QString &c7d);
     void setStatus(const QString &text);
-    void setTimingText(const QString &text);
     void showNearTray(const QPoint &trayPos);
 
     void setActive();   // 불투명(1.0)으로 페이드
@@ -41,9 +41,10 @@ private:
     QuotaPanel *m_panel5h        = nullptr;
     QuotaPanel *m_panel7d        = nullptr;
     QLabel     *m_statusLabel    = nullptr;
-    QLabel     *m_timingLabel    = nullptr;
     QWidget    *m_titleBar       = nullptr;
-    QLabel     *m_activityPill   = nullptr;  // 타이틀 바 내 토큰 발생 pill
+    QWidget               *m_activityLine  = nullptr;  // 타이틀바 하단 활성 표시 라인
+    QGraphicsOpacityEffect *m_lineEffect   = nullptr;
+    QPropertyAnimation    *m_lineAnim     = nullptr;
     QPushButton *m_pinBtn        = nullptr;
     QPoint      m_dragPos;
     QPoint      m_rememberedPos;
@@ -63,8 +64,6 @@ private:
     QString  m_pendingC7d;
     bool     m_hasPendingStatus = false;
     QString  m_pendingStatus;
-    bool     m_hasPendingTiming = false;
-    QString  m_pendingTiming;
 };
 
 #endif // USAGEPOPUP_H

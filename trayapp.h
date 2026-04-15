@@ -31,8 +31,6 @@ private:
     void updateTooltip();
     QIcon makeIcon(double utilization);
     QString formatCountdown(const QDateTime &resetsAt) const;
-    QString formatClockTime(const QDateTime &timestamp) const;
-    QString buildTimingText() const;
 
     QSystemTrayIcon *m_tray = nullptr;
     QMenu *m_contextMenu = nullptr;

@@ -126,8 +126,6 @@ void TrayApp::applyData(const UsageData &data)
     m_popup->setCountdowns(
         formatCountdown(data.fiveHour.resetsAt),
         formatCountdown(data.sevenDay.resetsAt));
-    m_popup->setTimingText(buildTimingText());
-
     QString status;
     if (!m_lastFetchError.isEmpty())
         status = QString("API 실패: %1").arg(m_lastFetchError);
@@ -135,7 +133,11 @@ void TrayApp::applyData(const UsageData &data)
         status = "로컬 추정값";
     m_popup->setStatus(status);
 
-    m_tray->setIcon(makeIcon(data.fiveHour.utilization));
+    // 7d >= 5h → 5h 기준, 7d < 5h → 7d 기준 (라인 색상과 동일 로직)
+    const double dominant = (data.sevenDay.utilization >= data.fiveHour.utilization)
+        ? data.fiveHour.utilization
+        : data.sevenDay.utilization;
+    m_tray->setIcon(makeIcon(dominant));
     updateTooltip();
 }
 
@@ -190,7 +192,6 @@ void TrayApp::updateCountdowns()
     m_popup->setCountdowns(
         formatCountdown(m_current.fiveHour.resetsAt),
         formatCountdown(m_current.sevenDay.resetsAt));
-    m_popup->setTimingText(buildTimingText());
 }
 
 void TrayApp::updateTooltip()
@@ -215,9 +216,9 @@ QIcon TrayApp::makeIcon(double utilization)
     p.setRenderHint(QPainter::Antialiasing);
 
     QColor color;
-    if (utilization < 0.50)
+    if (utilization < USAGE_WARN_PCT / 100.0)
         color = QColor(40, 167, 69);
-    else if (utilization < 0.80)
+    else if (utilization < USAGE_CRIT_PCT / 100.0)
         color = QColor(255, 193, 7);
     else
         color = QColor(220, 53, 69);
@@ -254,22 +255,6 @@ QString TrayApp::formatCountdown(const QDateTime &resetsAt) const
     return QString("%1m 후 초기화 (%2)").arg(mins).arg(clock);
 }
 
-QString TrayApp::formatClockTime(const QDateTime &timestamp) const
-{
-    if (!timestamp.isValid())
-        return "--:--:--";
-    return timestamp.toLocalTime().toString("HH:mm:ss");
-}
-
-QString TrayApp::buildTimingText() const
-{
-    auto toHHmm = [](const QDateTime &dt) -> QString {
-        return dt.isValid() ? dt.toLocalTime().toString("HH:mm") : "--:--";
-    };
-    return QString("최근 업데이트: %1 | 다음 갱신: %2")
-        .arg(toHHmm(m_lastSuccessfulApiFetchAt))
-        .arg(toHHmm(m_apiClient->nextScheduledFetchAt()));
-}
 
 void TrayApp::onActivityDetected()
 {

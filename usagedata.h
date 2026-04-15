@@ -1,6 +1,10 @@
 #ifndef USAGEDATA_H
 #define USAGEDATA_H
 
+// 사용량 경고 임계값 (공통)
+#define USAGE_WARN_PCT 71   // 71% 이상 → 주황
+#define USAGE_CRIT_PCT 86   // 86% 이상 → 빨강
+
 #include <QDateTime>
 
 struct QuotaInfo {

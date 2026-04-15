@@ -8,6 +8,7 @@
 #include <QHideEvent>
 #include <QLabel>
 #include <QMouseEvent>
+#include <QGraphicsOpacityEffect>
 #include <QPropertyAnimation>
 #include <QPushButton>
 #include <QScreen>
@@ -179,19 +180,6 @@ UsagePopup::UsagePopup(QWidget *parent)
     auto *titleLabel = new QLabel("Claude Code Usage");
     titleLabel->setStyleSheet("color: white; font-weight: bold; font-size: 12px;");
 
-    m_activityPill = new QLabel("● 토큰 발생");
-    m_activityPill->setStyleSheet(
-        "background: rgba(46, 204, 113, 0.2);"
-        "color: #2ecc71;"
-        "border: 1px solid #2ecc71;"
-        "border-radius: 10px;"
-        "padding: 0px 8px;"
-        "font-size: 10px;"
-        "font-weight: bold;"
-    );
-    m_activityPill->setFixedHeight(20);
-    m_activityPill->hide(); // 초기에는 숨김
-
     const QString btnBase = R"(
         QPushButton {
             background: transparent;
@@ -233,10 +221,17 @@ UsagePopup::UsagePopup(QWidget *parent)
     titleRow->addSpacing(6);
     titleRow->addWidget(titleLabel);
     titleRow->addStretch();
-    titleRow->addWidget(m_activityPill);
-    titleRow->addSpacing(6);
     titleRow->addWidget(minimizeBtn);
     titleRow->addWidget(closeBtn);
+
+    m_activityLine = new QWidget;
+    m_activityLine->setFixedHeight(3);
+    m_activityLine->setStyleSheet("background: #2ecc71;");
+    m_lineEffect = new QGraphicsOpacityEffect(m_activityLine);
+    m_lineEffect->setOpacity(0.0);
+    m_activityLine->setGraphicsEffect(m_lineEffect);
+    m_lineAnim = new QPropertyAnimation(m_lineEffect, "opacity", this);
+    m_lineAnim->setEasingCurve(QEasingCurve::InOutQuad);
 
     auto *sep1 = new QFrame;
     sep1->setFrameShape(QFrame::HLine);
@@ -264,13 +259,10 @@ UsagePopup::UsagePopup(QWidget *parent)
     m_statusLabel = new QLabel("불러오는 중...");
     m_statusLabel->setStyleSheet("color: #666; font-size: 10px;");
 
-    m_timingLabel = new QLabel("--");
-    m_timingLabel->setStyleSheet("color: #666; font-size: 10px;");
-
     footerLayout->addWidget(m_statusLabel);
-    footerLayout->addWidget(m_timingLabel);
 
     root->addWidget(m_titleBar);
+    root->addWidget(m_activityLine);
     root->addWidget(sep1);
     root->addWidget(m_panel5h);
     root->addWidget(sep2);
@@ -317,15 +309,6 @@ void UsagePopup::setStatus(const QString &text)
     m_statusLabel->setText(text);
 }
 
-void UsagePopup::setTimingText(const QString &text)
-{
-    if (m_isDragging) {
-        m_pendingTiming     = text;
-        m_hasPendingTiming  = true;
-        return;
-    }
-    m_timingLabel->setText(text);
-}
 
 void UsagePopup::animateOpacityTo(double target)
 {
@@ -340,7 +323,19 @@ void UsagePopup::applyDataInternal(const UsageData &data)
     m_panel5h->setData(data.fiveHour);
     m_panel7d->setData(data.sevenDay);
 
+    // 활성 라인 색상: 7d >= 5h → 5h 기준, 7d < 5h → 7d 기준
+    const double dominant = (data.sevenDay.utilization >= data.fiveHour.utilization)
+        ? data.fiveHour.utilization
+        : data.sevenDay.utilization;
 
+    QColor lineColor;
+    const int pct = qRound(dominant * 100.0);
+    if (pct < USAGE_WARN_PCT)      lineColor = QColor("#28a745");
+    else if (pct < USAGE_CRIT_PCT) lineColor = QColor("#ffc107");
+    else                           lineColor = QColor("#dc3545");
+
+    m_activityLine->setStyleSheet(
+        QString("background: %1;").arg(lineColor.name()));
 }
 
 void UsagePopup::applyCountdownsInternal(const QString &c5h, const QString &c7d)
@@ -362,10 +357,6 @@ void UsagePopup::applyPending()
     if (m_hasPendingStatus) {
         m_statusLabel->setText(m_pendingStatus);
         m_hasPendingStatus = false;
-    }
-    if (m_hasPendingTiming) {
-        m_timingLabel->setText(m_pendingTiming);
-        m_hasPendingTiming = false;
     }
 }
 
@@ -406,7 +397,14 @@ void UsagePopup::setActive()
 {
     m_idleMode      = false;
     m_opacityAtIdle = false;
-    m_activityPill->show();
+
+    // 라인 fade in
+    m_lineAnim->stop();
+    m_lineAnim->setDuration(300);
+    m_lineAnim->setStartValue(m_lineEffect->opacity());
+    m_lineAnim->setEndValue(1.0);
+    m_lineAnim->start();
+
     // 이미 불투명이거나 불투명 방향으로 진행 중이면 스킵
     if (windowOpacity() >= 1.0 && m_opacityAnim->endValue().toDouble() >= 1.0)
         return;
@@ -417,7 +415,16 @@ void UsagePopup::setIdle()
 {
     if (m_idleMode) return;  // 이미 페이드 중이거나 idle 상태 → 중복 호출 무시
     m_idleMode = true;
-    m_activityPill->hide();
+
+    // 라인 2초 후 fade out
+    QTimer::singleShot(2'000, this, [this]() {
+        if (!m_idleMode) return;
+        m_lineAnim->stop();
+        m_lineAnim->setDuration(600);
+        m_lineAnim->setStartValue(m_lineEffect->opacity());
+        m_lineAnim->setEndValue(0.0);
+        m_lineAnim->start();
+    });
 
     // LED 페이드 완료 시점(10초)에 맞춰 직접 투명화 — 핀 고정 상태일 때만
     QTimer::singleShot(10'000, this, [this]() {
