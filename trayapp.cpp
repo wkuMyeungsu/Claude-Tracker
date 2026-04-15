@@ -1,3 +1,4 @@
+
 #include "trayapp.h"
 #include "usageapiclient.h"
 #include "usagepopup.h"
@@ -39,8 +40,11 @@ TrayApp::TrayApp(QObject *parent)
             this, &TrayApp::onLocalUsage);
     connect(m_scanner, &UsageScanner::activityDetected,
             this, &TrayApp::onActivityDetected);
-    connect(m_scanner, &UsageScanner::activityStopped,
-            this, &TrayApp::onActivityTimeout);  // 디바운스 만료 즉시 idle 전환
+    // activityStopped → 즉시 LED 페이드 시작 (30초 후 회색 되면 투명도 적용)
+    connect(m_scanner, &UsageScanner::activityStopped, this, [this]() {
+        m_isActive = false;
+        m_popup->setIdle();
+    });
 
     // 앱 재시작 후 API 응답 전까지 마지막 resetsAt 로 추정
     QSettings s("ClaudeTray", "ClaudeTray");
@@ -63,9 +67,6 @@ void TrayApp::onTrayActivated(QSystemTrayIcon::ActivationReason reason)
         m_popup->hide();
     } else {
         m_popup->showNearTray(QCursor::pos());
-        // 이미 idle 상태라면 팝업 열린 후 0.5초 뒤 페이드
-        if (!m_isActive)
-            QTimer::singleShot(500, m_popup, &UsagePopup::setIdle);
     }
 }
 
@@ -253,11 +254,11 @@ QString TrayApp::formatCountdown(const QDateTime &resetsAt) const
     if (days > 0) {
         // 7일 리셋: 몇 월 며칠 무슨 요일인지 함께 표시
         const QString fullClock = QLocale::system().toString(local, "M/d ddd HH:mm");
-        return QString("리셋까지 %1d %2h  (%3 리셋)").arg(days).arg(hours).arg(fullClock);
+        return QString("리셋까지 %1일 %2시간  (%3 리셋)").arg(days).arg(hours).arg(fullClock);
     }
     if (hours > 0)
-        return QString("리셋까지 %1h %2m  (%3 리셋)").arg(hours).arg(mins).arg(clock);
-    return QString("리셋까지 %1m  (%2 리셋)").arg(mins).arg(clock);
+        return QString("리셋까지 %1시간 %2분  (%3 리셋)").arg(hours).arg(mins).arg(clock);
+    return QString("리셋까지 %1분  (%2 리셋)").arg(mins).arg(clock);
 }
 
 QString TrayApp::formatClockTime(const QDateTime &timestamp) const
@@ -280,8 +281,3 @@ void TrayApp::onActivityDetected()
     m_popup->setActive();
 }
 
-void TrayApp::onActivityTimeout()
-{
-    m_isActive = false;
-    m_popup->setIdle();         // 0.6 투명으로 페이드 (팝업이 보일 때만)
-}

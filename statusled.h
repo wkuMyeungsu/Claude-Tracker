@@ -9,7 +9,7 @@ class QTimer;
 
 // iOS 스타일 상태 LED
 // - 활성: #34C759(iOS 그린) breathing 펄스
-// - 종료: 현재 색 → #48484A(iOS 회색) 30초 페이드
+// - 비활성: 현재 색 → 밝은 회색 10초 페이드
 class StatusLed : public QWidget
 {
     Q_OBJECT
@@ -22,7 +22,7 @@ public:
     void   setLedColor(const QColor &c);
 
     void setActive();  // 펄스 시작
-    void setIdle();    // 30초 페이드 → 회색
+    void setIdle();    // 10초 페이드 → 회색
 
 protected:
     void paintEvent(QPaintEvent *event) override;

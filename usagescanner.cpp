@@ -28,7 +28,7 @@ const QMap<QString, qint64> PLAN_LIMITS_7D = {
     {"max_20x", 2'880'000'000LL},
 };
 
-static constexpr int DEBOUNCE_MS      = 2000;  // 파일 변경 디바운스 간격
+static constexpr int DEBOUNCE_MS      = 300;   // 파일 변경 디바운스 간격 (0.3초)
 static constexpr int WATCHLIST_MS     = 5 * 60 * 1000;  // 감시 목록 갱신 간격
 }
 

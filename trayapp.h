@@ -24,7 +24,6 @@ private slots:
     void updateCountdowns();
     void onTrayActivated(QSystemTrayIcon::ActivationReason reason);
     void onActivityDetected();
-    void onActivityTimeout();
 
 private:
     void applyData(const UsageData &data);
@@ -42,7 +41,7 @@ private:
     UsageScanner *m_scanner = nullptr;
     UsageData m_current;
     UsageData m_lastApiData;
-    QTimer *m_countdownTimer = nullptr;
+    QTimer *m_countdownTimer  = nullptr;
     QDateTime m_lastSuccessfulApiFetchAt;
     QString m_lastFetchError;
     bool m_apiFailed      = false;

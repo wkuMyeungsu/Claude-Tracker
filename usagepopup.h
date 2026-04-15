@@ -38,16 +38,20 @@ private:
     void applyCountdownsInternal(const QString &c5h, const QString &c7d);
     void applyPending();    // 드래그 종료 시 밀린 업데이트 일괄 반영
 
-    QuotaPanel *m_panel5h    = nullptr;
-    QuotaPanel *m_panel7d    = nullptr;
-    QLabel     *m_statusLabel = nullptr;
-    QLabel     *m_timingLabel = nullptr;
-    QWidget    *m_titleBar   = nullptr;
+    QuotaPanel *m_panel5h        = nullptr;
+    QuotaPanel *m_panel7d        = nullptr;
+    QLabel     *m_statusLabel    = nullptr;
+    QLabel     *m_timingLabel    = nullptr;
+    QWidget    *m_titleBar       = nullptr;
+    QLabel     *m_activityPill   = nullptr;  // 타이틀 바 내 토큰 발생 pill
     QPoint      m_dragPos;
+    QPoint      m_rememberedPos;
+    bool        m_hasRememberedPos = false;  // 최소화로 닫혔을 때 위치 저장
 
     QPropertyAnimation *m_opacityAnim      = nullptr;
-    bool                m_idleMode         = false;  // setIdle() 호출 시 true
-    bool                m_wasIdleBeforeDrag = false; // 클릭 직전 idle 상태 저장
+    bool                m_idleMode          = true;   // 시작 시 idle (활동 감지 전까지)
+    bool                m_opacityAtIdle     = true;   // 시작 시 투명 상태 (활동 감지 전까지)
+    bool                m_wasOpacityIdleBeforeDrag = false; // 드래그 직전 opacity idle 상태
     StatusLed          *m_led        = nullptr;
 
     // 드래그 중 UI 업데이트 억제
