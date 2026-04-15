@@ -7,6 +7,7 @@
 #include <QMenu>
 #include <QPainter>
 #include <QPixmap>
+#include <QSettings>
 #include <QTimer>
 
 TrayApp::TrayApp(QObject *parent)
@@ -44,6 +45,13 @@ TrayApp::TrayApp(QObject *parent)
     m_activityTimer->setInterval(10 * 1000);  // 10초 조용하면 idle
     connect(m_activityTimer, &QTimer::timeout, this, &TrayApp::onActivityTimeout);
 
+    // 앱 재시작 후 API 응답 전까지 마지막 resetsAt 로 추정
+    QSettings s("ClaudeTray", "ClaudeTray");
+    const QDateTime r5h = QDateTime::fromString(s.value("reset5h").toString(), Qt::ISODate);
+    const QDateTime r7d = QDateTime::fromString(s.value("reset7d").toString(),  Qt::ISODate);
+    if (r5h.isValid() || r7d.isValid())
+        m_scanner->setWindowHints(r5h, r7d);
+
     connect(m_countdownTimer, &QTimer::timeout,
             this, &TrayApp::updateCountdowns);
     m_countdownTimer->start(60 * 1000);
@@ -74,7 +82,13 @@ void TrayApp::onUsageFetched(UsageData data)
     m_lastSuccessfulApiFetchAt = data.fetchedAt;
 
     m_scanner->setWindowHints(data.fiveHour.resetsAt, data.sevenDay.resetsAt);
-    m_scanner->setDeltaStart(data.fetchedAt);   // 다음 로컬 스캔의 델타 기준 시각
+    m_scanner->setDeltaStart(data.fetchedAt);
+
+    // resetsAt 영속 저장 (앱 재시작 후에도 추정에 활용)
+    QSettings s("ClaudeTray", "ClaudeTray");
+    s.setValue("reset5h", data.fiveHour.resetsAt.toString(Qt::ISODate));
+    s.setValue("reset7d",  data.sevenDay.resetsAt.toString(Qt::ISODate));
+
     applyData(data);
 }
 
@@ -98,6 +112,14 @@ void TrayApp::onLocalUsage(UsageData full, UsageData delta, bool hasDelta)
         : full;
     m_current = merged;
     applyData(merged);
+
+    // 마지막 API resetsAt 가 이미 지났으면 즉시 재호출 → 정확한 새 리셋 시각 수신
+    if (m_hasLastApiData) {
+        const QDateTime now = QDateTime::currentDateTimeUtc();
+        if (m_lastApiData.fiveHour.resetsAt.isValid() &&
+            m_lastApiData.fiveHour.resetsAt.toUTC() <= now)
+            m_apiClient->fetchUsage();
+    }
 }
 
 void TrayApp::applyData(const UsageData &data)
