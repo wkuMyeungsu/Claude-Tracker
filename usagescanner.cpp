@@ -265,10 +265,19 @@ UsageData UsageScanner::calcUsageForRange(const QDateTime &rangeStartUtc,
     data.fromApi  = false;
     data.fetchedAt = QDateTime::currentDateTime();
 
+    // 마지막 리셋 시각이 이미 과거일 경우 주기를 더해 다음 리셋 시각 추정
+    auto estimateNext = [](const QDateTime &last, qint64 periodSecs,
+                           const QDateTime &now) -> QDateTime {
+        if (!last.isValid()) return {};
+        if (last.toUTC() > now) return last;
+        const qint64 elapsed = last.toUTC().secsTo(now);
+        return last.toUTC().addSecs((elapsed / periodSecs + 1) * periodSecs);
+    };
+
     if (rolling5hTokens > 0 || limit5h > 0) {
         data.fiveHour.rawTokens   = rolling5hTokens;
         data.fiveHour.limitTokens = limit5h;
-        data.fiveHour.resetsAt    = (reset5h.isValid() && reset5h > now) ? reset5h : QDateTime();
+        data.fiveHour.resetsAt    = estimateNext(reset5h, 5LL * 3600, now);
         data.fiveHour.valid       = true;
         if (limit5h > 0)
             data.fiveHour.utilization = qMin(1.0, static_cast<double>(rolling5hTokens) /
@@ -278,7 +287,7 @@ UsageData UsageScanner::calcUsageForRange(const QDateTime &rangeStartUtc,
     if (rolling7dTokens > 0 || limit7d > 0) {
         data.sevenDay.rawTokens   = rolling7dTokens;
         data.sevenDay.limitTokens = limit7d;
-        data.sevenDay.resetsAt    = (reset7d.isValid() && reset7d > now) ? reset7d : QDateTime();
+        data.sevenDay.resetsAt    = estimateNext(reset7d, 7LL * 24 * 3600, now);
         data.sevenDay.valid       = true;
         if (limit7d > 0)
             data.sevenDay.utilization = qMin(1.0, static_cast<double>(rolling7dTokens) /

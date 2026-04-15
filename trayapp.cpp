@@ -131,6 +131,17 @@ UsageData TrayApp::mergeWithLastApi(const UsageData &data) const
         return data;
 
     UsageData merged = m_lastApiData;
+
+    // API resetsAt 가 이미 과거(리셋 발생)이면 주기로 다음 리셋 시각 추정
+    auto estimateNext = [](const QDateTime &last, qint64 periodSecs) -> QDateTime {
+        if (!last.isValid()) return {};
+        const QDateTime now = QDateTime::currentDateTimeUtc();
+        if (last.toUTC() > now) return last;
+        const qint64 elapsed = last.toUTC().secsTo(now);
+        return last.toUTC().addSecs((elapsed / periodSecs + 1) * periodSecs);
+    };
+    merged.fiveHour.resetsAt  = estimateNext(m_lastApiData.fiveHour.resetsAt,  5LL * 3600);
+    merged.sevenDay.resetsAt  = estimateNext(m_lastApiData.sevenDay.resetsAt,  7LL * 24 * 3600);
     merged.fromApi = false;
     merged.fetchedAt = QDateTime::currentDateTime();
 
