@@ -39,11 +39,8 @@ TrayApp::TrayApp(QObject *parent)
             this, &TrayApp::onLocalUsage);
     connect(m_scanner, &UsageScanner::activityDetected,
             this, &TrayApp::onActivityDetected);
-
-    m_activityTimer = new QTimer(this);
-    m_activityTimer->setSingleShot(true);
-    m_activityTimer->setInterval(10 * 1000);  // 10초 조용하면 idle
-    connect(m_activityTimer, &QTimer::timeout, this, &TrayApp::onActivityTimeout);
+    connect(m_scanner, &UsageScanner::activityStopped,
+            this, &TrayApp::onActivityTimeout);  // 디바운스 만료 즉시 idle 전환
 
     // 앱 재시작 후 API 응답 전까지 마지막 resetsAt 로 추정
     QSettings s("ClaudeTray", "ClaudeTray");
@@ -280,8 +277,7 @@ QString TrayApp::buildTimingText() const
 void TrayApp::onActivityDetected()
 {
     m_isActive = true;
-    m_activityTimer->start();   // 10초 타이머 리셋
-    m_popup->setActive();       // 불투명으로 전환
+    m_popup->setActive();
 }
 
 void TrayApp::onActivityTimeout()

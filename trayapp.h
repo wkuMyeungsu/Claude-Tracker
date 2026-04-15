@@ -45,10 +45,9 @@ private:
     QTimer *m_countdownTimer = nullptr;
     QDateTime m_lastSuccessfulApiFetchAt;
     QString m_lastFetchError;
-    bool    m_apiFailed      = false;
-    bool    m_hasLastApiData = false;
-    QTimer *m_activityTimer  = nullptr;
-    bool    m_isActive       = false;  // 토큰 사용 중 여부
+    bool m_apiFailed      = false;
+    bool m_hasLastApiData = false;
+    bool m_isActive       = false;  // 토큰 사용 중 여부
 };
 
 #endif // TRAYAPP_H

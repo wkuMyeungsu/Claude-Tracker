@@ -28,8 +28,10 @@ public:
     static qint64 planLimit7d();
 
 signals:
-    // 파일 변경 감지 즉시 emit (디바운스 전) → TrayApp 투명도 제어에 사용
+    // 파일 변경 감지 즉시 emit (디바운스 전) → 활성 상태 전환
     void activityDetected();
+    // 디바운스 만료 시 emit (2초간 변경 없음) → 즉시 idle 전환
+    void activityStopped();
     // 백그라운드 스캔 완료 시 emit
     // full  : 최근 5h/7d 전체 롤링 윈도우 결과
     // delta : m_deltaStart 이후 증분 결과 (hasDelta == false 이면 full 과 동일)

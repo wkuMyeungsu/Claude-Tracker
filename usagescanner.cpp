@@ -116,6 +116,9 @@ void UsageScanner::refreshWatchList()
 
 void UsageScanner::doScan()
 {
+    // 디바운스 만료 = 파일 변경이 2초간 없었음 → 즉시 idle 전환
+    emit activityStopped();
+
     if (m_scanPending) {
         // 이전 스캔이 아직 진행 중 → 완료 후 재시도
         m_debounceTimer->start();
