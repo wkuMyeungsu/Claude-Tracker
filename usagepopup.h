@@ -33,6 +33,7 @@ protected:
     void hideEvent(QHideEvent *event) override;
 
 private:
+    void animateOpacityTo(double target);  // LED 건드리지 않고 투명도만 변경
     void applyDataInternal(const UsageData &data);
     void applyCountdownsInternal(const QString &c5h, const QString &c7d);
     void applyPending();    // 드래그 종료 시 밀린 업데이트 일괄 반영

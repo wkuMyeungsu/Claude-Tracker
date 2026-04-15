@@ -168,6 +168,14 @@ void UsagePopup::setTimingText(const QString &text)
     m_timingLabel->setText(text);
 }
 
+void UsagePopup::animateOpacityTo(double target)
+{
+    m_opacityAnim->stop();
+    m_opacityAnim->setStartValue(windowOpacity());
+    m_opacityAnim->setEndValue(target);
+    m_opacityAnim->start();
+}
+
 void UsagePopup::applyDataInternal(const UsageData &data)
 {
     m_panel5h->setData(data.fiveHour);
@@ -210,8 +218,8 @@ bool UsagePopup::eventFilter(QObject *obj, QEvent *event)
         if (me->button() == Qt::LeftButton) {
             m_dragPos           = me->globalPosition().toPoint() - frameGeometry().topLeft();
             m_isDragging        = true;
-            m_wasIdleBeforeDrag = m_idleMode;  // setActive() 호출 전에 저장
-            setActive();
+            m_wasIdleBeforeDrag = m_idleMode;
+            animateOpacityTo(1.0);  // 투명도만 변경, LED 건드리지 않음
             return true;
         }
     } else if (event->type() == QEvent::MouseMove) {
@@ -225,7 +233,7 @@ bool UsagePopup::eventFilter(QObject *obj, QEvent *event)
         if (me->button() == Qt::LeftButton) {
             m_isDragging = false;
             applyPending();
-            if (m_wasIdleBeforeDrag) setIdle();  // 클릭 전 idle 이었으면 복원
+            if (m_wasIdleBeforeDrag) animateOpacityTo(0.6);  // 투명도만 복원
             return true;
         }
     }
