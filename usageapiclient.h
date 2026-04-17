@@ -17,8 +17,9 @@ public:
     static int pollIntervalMs();
 
 signals:
+    void fetchStarted();
     void usageFetched(UsageData data);
-    void fetchFailed(QString reason);
+    void fetchFailed(QString reason, bool networkError);
 
 public slots:
     void fetchUsage();
@@ -32,7 +33,8 @@ private:
     QNetworkAccessManager *m_nam;
     QTimer                *m_pollTimer;
     QDateTime              m_nextScheduledFetchAt;
-    bool                   m_pending = false;
+    bool                   m_pending            = false;
+    int                    m_consecutiveFailures = 0;
 };
 
 #endif // USAGEAPICLIENT_H

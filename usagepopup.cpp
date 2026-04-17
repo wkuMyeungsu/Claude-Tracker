@@ -1,7 +1,6 @@
 #include "usagepopup.h"
 #include "quotapanel.h"
 #include <QApplication>
-#include <QDialog>
 #include <QEasingCurve>
 #include <QFrame>
 #include <QHBoxLayout>
@@ -12,113 +11,10 @@
 #include <QPropertyAnimation>
 #include <QPushButton>
 #include <QScreen>
+#include <QDebug>
 #include <QTimer>
 #include <QVBoxLayout>
 
-// ... QuitConfirmDialog 클래스 내용은 동일하므로 중략 (실제로는 포함됨) ...
-
-// ── 종료 확인 다이얼로그 (UsagePopup과 동일한 UI 스타일) ─────────────────────
-class QuitConfirmDialog : public QDialog
-{
-public:
-    explicit QuitConfirmDialog(QWidget *parent = nullptr)
-        : QDialog(parent, Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint)
-    {
-        setFixedWidth(260);
-        setAttribute(Qt::WA_TranslucentBackground);
-        setStyleSheet("QDialog { background: white; border: 1px solid #444; border-radius: 6px; }"
-                      "QWidget#body { background: white; border-bottom-left-radius: 6px; border-bottom-right-radius: 6px; }");
-
-        auto *root = new QVBoxLayout(this);
-        root->setContentsMargins(0, 0, 0, 0);
-        root->setSpacing(0);
-
-        // 타이틀바
-        auto *titleBar = new QWidget;
-        titleBar->setFixedHeight(36);
-        titleBar->setStyleSheet(
-            "background: #2d2d2d;"
-            "border-top-left-radius: 6px;"
-            "border-top-right-radius: 6px;");
-        titleBar->installEventFilter(this);
-
-        auto *titleRow = new QHBoxLayout(titleBar);
-        titleRow->setContentsMargins(12, 0, 8, 0);
-
-        auto *titleLabel = new QLabel("ClaudeTray 종료");
-        titleLabel->setStyleSheet("color: white; font-weight: bold; font-size: 12px; background: transparent;");
-        titleRow->addWidget(titleLabel);
-        titleRow->addStretch();
-
-        // 본문
-        auto *body = new QWidget;
-        body->setObjectName("body");
-
-        auto *bodyLayout = new QVBoxLayout(body);
-        bodyLayout->setContentsMargins(16, 16, 16, 16);
-        bodyLayout->setSpacing(16);
-
-        auto *msgLabel = new QLabel("ClaudeTray를 종료하시겠습니까?");
-        msgLabel->setStyleSheet("color: #333; font-size: 12px; background: transparent;");
-        msgLabel->setWordWrap(true);
-
-        auto *btnRow = new QHBoxLayout;
-        btnRow->setSpacing(8);
-
-        const QString btnBase =
-            "QPushButton { padding: 5px 16px; border-radius: 4px; font-size: 11px; }";
-
-        auto *cancelBtn = new QPushButton("취소");
-        cancelBtn->setStyleSheet(btnBase +
-            "QPushButton { background: white; color: #333; border: 1px solid #ccc; }"
-            "QPushButton:hover { background: #f0f0f0; }");
-        cancelBtn->setCursor(Qt::PointingHandCursor);
-        connect(cancelBtn, &QPushButton::clicked, this, &QDialog::reject);
-
-        auto *confirmBtn = new QPushButton("종료");
-        confirmBtn->setStyleSheet(btnBase +
-            "QPushButton { background: #c0392b; color: white; border: none; }"
-            "QPushButton:hover { background: #a93226; }");
-        confirmBtn->setCursor(Qt::PointingHandCursor);
-        connect(confirmBtn, &QPushButton::clicked, this, &QDialog::accept);
-
-        btnRow->addStretch();
-        btnRow->addWidget(cancelBtn);
-        btnRow->addWidget(confirmBtn);
-
-        bodyLayout->addWidget(msgLabel);
-        bodyLayout->addLayout(btnRow);
-
-        root->addWidget(titleBar);
-        root->addWidget(body);
-
-        m_titleBar = titleBar;
-    }
-
-    bool eventFilter(QObject *obj, QEvent *event) override
-    {
-        if (obj == m_titleBar) {
-            if (event->type() == QEvent::MouseButtonPress) {
-                auto *me = static_cast<QMouseEvent *>(event);
-                if (me->button() == Qt::LeftButton) {
-                    m_dragPos = me->globalPosition().toPoint() - frameGeometry().topLeft();
-                    return true;
-                }
-            } else if (event->type() == QEvent::MouseMove) {
-                auto *me = static_cast<QMouseEvent *>(event);
-                if (me->buttons() & Qt::LeftButton) {
-                    move(me->globalPosition().toPoint() - m_dragPos);
-                    return true;
-                }
-            }
-        }
-        return QDialog::eventFilter(obj, event);
-    }
-
-private:
-    QWidget *m_titleBar = nullptr;
-    QPoint   m_dragPos;
-};
 
 UsagePopup::UsagePopup(QWidget *parent)
     : QWidget(parent, Qt::Tool | Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint)
@@ -201,28 +97,11 @@ UsagePopup::UsagePopup(QWidget *parent)
         hide();
     });
 
-    auto *closeBtn = new QPushButton("x");
-    closeBtn->setFixedSize(22, 22);
-    closeBtn->setCursor(Qt::PointingHandCursor);
-    closeBtn->setStyleSheet(btnBase + R"(
-        QPushButton:hover { color: white; background: #c0392b; border-radius: 3px; }
-    )");
-    connect(closeBtn, &QPushButton::clicked, this, [this]() {
-        QuitConfirmDialog dlg(this);
-        // 부모 팝업 중앙에 배치
-        const QPoint center = geometry().center();
-        dlg.adjustSize();
-        dlg.move(center.x() - dlg.width() / 2, center.y() - dlg.height() / 2);
-        if (dlg.exec() == QDialog::Accepted)
-            emit quitRequested();
-    });
-
     titleRow->addWidget(m_pinBtn);
     titleRow->addSpacing(6);
     titleRow->addWidget(titleLabel);
     titleRow->addStretch();
     titleRow->addWidget(minimizeBtn);
-    titleRow->addWidget(closeBtn);
 
     m_activityLine = new QWidget;
     m_activityLine->setFixedHeight(3);
@@ -233,42 +112,40 @@ UsagePopup::UsagePopup(QWidget *parent)
     m_lineAnim = new QPropertyAnimation(m_lineEffect, "opacity", this);
     m_lineAnim->setEasingCurve(QEasingCurve::InOutQuad);
 
-    auto *sep1 = new QFrame;
-    sep1->setFrameShape(QFrame::HLine);
-    sep1->setStyleSheet("color: #444;");
-
     m_panel5h = new QuotaPanel("5h 사용량");
-
-    auto *sep2 = new QFrame;
-    sep2->setFrameShape(QFrame::HLine);
-    sep2->setStyleSheet("color: #ddd;");
-
     m_panel7d = new QuotaPanel("7d 사용량");
 
-    auto *sep3 = new QFrame;
-    sep3->setFrameShape(QFrame::HLine);
-    sep3->setStyleSheet("color: #ddd;");
+    m_sep1 = new QFrame; m_sep1->setFrameShape(QFrame::HLine); m_sep1->setStyleSheet("color: #444;");
+    m_sep2 = new QFrame; m_sep2->setFrameShape(QFrame::HLine); m_sep2->setStyleSheet("color: #ddd;");
+    m_sep3 = new QFrame; m_sep3->setFrameShape(QFrame::HLine); m_sep3->setStyleSheet("color: #ddd;");
 
-    auto *footer = new QWidget;
-    footer->setStyleSheet("background: #f8f9fa;");
-
-    auto *footerLayout = new QVBoxLayout(footer);
+    m_footer = new QWidget;
+    m_footer->setStyleSheet("background: #f8f9fa;");
+    auto *footerLayout = new QVBoxLayout(m_footer);
     footerLayout->setContentsMargins(14, 8, 14, 10);
-    footerLayout->setSpacing(6);
+    footerLayout->setSpacing(0);
+    m_statusLine = new QLabel("🔄 갱신 중...");
+    m_statusLine->setStyleSheet("color: #666; font-size: 10px;");
+    footerLayout->addWidget(m_statusLine);
 
-    m_statusLabel = new QLabel("불러오는 중...");
-    m_statusLabel->setStyleSheet("color: #666; font-size: 10px;");
+    m_justRefreshedTimer = new QTimer(this);
+    m_justRefreshedTimer->setSingleShot(true);
+    connect(m_justRefreshedTimer, &QTimer::timeout, this, &UsagePopup::updateStatusLine);
 
-    footerLayout->addWidget(m_statusLabel);
+    m_collapsingBody = new QWidget;
+    auto *bodyLayout = new QVBoxLayout(m_collapsingBody);
+    bodyLayout->setContentsMargins(0, 0, 0, 0);
+    bodyLayout->setSpacing(0);
+    bodyLayout->addWidget(m_sep1);
+    bodyLayout->addWidget(m_panel5h);
+    bodyLayout->addWidget(m_sep2);
+    bodyLayout->addWidget(m_panel7d);
+    bodyLayout->addWidget(m_sep3);
+    bodyLayout->addWidget(m_footer);
 
     root->addWidget(m_titleBar);
     root->addWidget(m_activityLine);
-    root->addWidget(sep1);
-    root->addWidget(m_panel5h);
-    root->addWidget(sep2);
-    root->addWidget(m_panel7d);
-    root->addWidget(sep3);
-    root->addWidget(footer);
+    root->addWidget(m_collapsingBody);
 
     setStyleSheet("QWidget { background: white; }");
 
@@ -299,16 +176,83 @@ void UsagePopup::setCountdowns(const QString &c5h, const QString &c7d)
     applyCountdownsInternal(c5h, c7d);
 }
 
-void UsagePopup::setStatus(const QString &text)
+void UsagePopup::setRefreshState(RefreshState state, QDateTime lastFetch, QDateTime nextFetch)
 {
     if (m_isDragging) {
-        m_pendingStatus     = text;
-        m_hasPendingStatus  = true;
+        m_hasPendingRefreshState = true;
+        m_pendingRefreshState    = state;
+        m_pendingLastFetch       = lastFetch;
+        m_pendingNextFetch       = nextFetch;
         return;
     }
-    m_statusLabel->setText(text);
+
+    const bool stateChanged = (m_refreshState != state);
+    m_refreshState = state;
+    if (lastFetch.isValid()) m_lastFetch = lastFetch;
+    if (nextFetch.isValid()) m_nextFetch = nextFetch;
+
+    if (stateChanged && state == RefreshState::Refreshed)
+        m_justRefreshedTimer->start(60 * 1000);
+    else if (state != RefreshState::Refreshed)
+        m_justRefreshedTimer->stop();
+
+    updateStatusLine();
 }
 
+void UsagePopup::refreshNextFetch(QDateTime nextFetch)
+{
+    m_nextFetch = nextFetch;
+    updateStatusLine();
+}
+
+static QString fmtAgo(const QDateTime &dt)
+{
+    if (!dt.isValid()) return "-";
+    const qint64 secs = dt.secsTo(QDateTime::currentDateTime());
+    if (secs < 60)    return "방금";
+    if (secs < 3600)  return QString("%1m 전").arg(secs / 60);
+    if (secs < 86400) return QString("%1h 전").arg(secs / 3600);
+    return QString("%1d 전").arg(secs / 86400);
+}
+
+static QString fmtIn(const QDateTime &dt)
+{
+    if (!dt.isValid()) return "-";
+    const qint64 secs = QDateTime::currentDateTime().secsTo(dt);
+    if (secs < 30)    return "곧";
+    if (secs < 3600)  return QString("%1m 후").arg(secs / 60);
+    if (secs < 86400) return QString("%1h 후").arg(secs / 3600);
+    return QString("%1d 후").arg(secs / 86400);
+}
+
+
+void UsagePopup::updateStatusLine()
+{
+    QString text;
+    switch (m_refreshState) {
+    case RefreshState::Fetching:
+        text = "🔄 갱신 중...";
+        break;
+    case RefreshState::Refreshed: {
+        const qint64 secs = m_lastFetch.isValid()
+            ? m_lastFetch.secsTo(QDateTime::currentDateTime()) : 999;
+        if (secs < 60) {
+            text = "🟢 방금 갱신";
+        } else {
+            const QString t = m_lastFetch.toString("HH:mm");
+            text = QString("🟢 %1 갱신  ·  다음 %2").arg(t, fmtIn(m_nextFetch));
+        }
+        break;
+    }
+    case RefreshState::LocalFallback:
+        text = "🟡 로컬 추적중";
+        break;
+    case RefreshState::NetworkError:
+        text = "🔴 연결 오류";
+        break;
+    }
+    m_statusLine->setText(text);
+}
 
 void UsagePopup::animateOpacityTo(double target)
 {
@@ -334,8 +278,7 @@ void UsagePopup::applyDataInternal(const UsageData &data)
     else if (pct < USAGE_CRIT_PCT) lineColor = QColor("#ffc107");
     else                           lineColor = QColor("#dc3545");
 
-    m_activityLine->setStyleSheet(
-        QString("background: %1;").arg(lineColor.name()));
+    m_activityLine->setStyleSheet(QString("background: %1;").arg(lineColor.name()));
 }
 
 void UsagePopup::applyCountdownsInternal(const QString &c5h, const QString &c7d)
@@ -354,9 +297,17 @@ void UsagePopup::applyPending()
         applyCountdownsInternal(m_pendingC5h, m_pendingC7d);
         m_hasPendingCD = false;
     }
-    if (m_hasPendingStatus) {
-        m_statusLabel->setText(m_pendingStatus);
-        m_hasPendingStatus = false;
+    if (m_hasPendingRefreshState) {
+        const bool stateChanged = (m_refreshState != m_pendingRefreshState);
+        m_refreshState = m_pendingRefreshState;
+        if (m_pendingLastFetch.isValid()) m_lastFetch = m_pendingLastFetch;
+        if (m_pendingNextFetch.isValid()) m_nextFetch = m_pendingNextFetch;
+        if (stateChanged && m_refreshState == RefreshState::Refreshed)
+            m_justRefreshedTimer->start(60 * 1000);
+        else if (m_refreshState != RefreshState::Refreshed)
+            m_justRefreshedTimer->stop();
+        updateStatusLine();
+        m_hasPendingRefreshState = false;
     }
 }
 
@@ -365,7 +316,7 @@ bool UsagePopup::eventFilter(QObject *obj, QEvent *event)
     if (obj != m_titleBar)
         return QWidget::eventFilter(obj, event);
 
-    if (event->type() == QEvent::MouseButtonPress) {
+    if (event->type() == QEvent::MouseButtonPress || event->type() == QEvent::MouseButtonDblClick) {
         auto *me = static_cast<QMouseEvent *>(event);
         if (me->button() == Qt::LeftButton) {
             m_dragPos                  = me->globalPosition().toPoint() - frameGeometry().topLeft();
@@ -397,6 +348,10 @@ void UsagePopup::setActive()
 {
     m_idleMode      = false;
     m_opacityAtIdle = false;
+
+    // opacity=0 중 setStyleSheet()가 호출돼도 Qt가 repaint를 건너뛸 수 있음
+    // → QGraphicsOpacityEffect 소스 캐시 강제 무효화
+    m_activityLine->update();
 
     // 라인 fade in
     m_lineAnim->stop();
@@ -441,6 +396,12 @@ void UsagePopup::hideEvent(QHideEvent *event)
     m_opacityAnim->stop();
     setWindowOpacity(1.0);  // 다음 show() 시 항상 불투명에서 시작
     QWidget::hideEvent(event);
+}
+
+void UsagePopup::toggleCompact()
+{
+    // TODO: 컴팩트 모드 미구현 — 직접 구현 예정
+    qDebug() << "[UsagePopup] toggleCompact() called — not yet implemented";
 }
 
 void UsagePopup::showNearTray(const QPoint &trayPos)

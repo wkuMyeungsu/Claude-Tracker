@@ -2,68 +2,87 @@
 #define USAGEPOPUP_H
 
 #include <QWidget>
+#include <QDateTime>
 #include "usagedata.h"
 
+class QFrame;
 class QLabel;
 class QPropertyAnimation;
 class QGraphicsOpacityEffect;
 class QuotaPanel;
 class QWidget;
 class QPushButton;
+class QTimer;
 
 class UsagePopup : public QWidget
 {
     Q_OBJECT
 public:
+    enum class RefreshState { Fetching, Refreshed, LocalFallback, NetworkError };
+
     explicit UsagePopup(QWidget *parent = nullptr);
 
     void setData(const UsageData &data);
     void setCountdowns(const QString &c5h, const QString &c7d);
-    void setStatus(const QString &text);
+    void setRefreshState(RefreshState state, QDateTime lastFetch = {}, QDateTime nextFetch = {});
+    void refreshNextFetch(QDateTime nextFetch);   // 상태 변경 없이 "다음 Xm 후" 갱신
     void showNearTray(const QPoint &trayPos);
 
-    void setActive();   // 불투명(1.0)으로 페이드
-    void setIdle();     // 반투명(0.6)으로 페이드 (visible 일 때만)
-
-signals:
-    void quitRequested();
+    void setActive();
+    void setIdle();
 
 protected:
     bool eventFilter(QObject *obj, QEvent *event) override;
     void hideEvent(QHideEvent *event) override;
 
 private:
-    void animateOpacityTo(double target);  // 투명도만 변경
+    void animateOpacityTo(double target);
     void applyDataInternal(const UsageData &data);
     void applyCountdownsInternal(const QString &c5h, const QString &c7d);
-    void applyPending();    // 드래그 종료 시 밀린 업데이트 일괄 반영
+    void updateStatusLine();
+    void applyPending();
 
-    QuotaPanel *m_panel5h        = nullptr;
-    QuotaPanel *m_panel7d        = nullptr;
-    QLabel     *m_statusLabel    = nullptr;
-    QWidget    *m_titleBar       = nullptr;
-    QWidget               *m_activityLine  = nullptr;  // 타이틀바 하단 활성 표시 라인
-    QGraphicsOpacityEffect *m_lineEffect   = nullptr;
-    QPropertyAnimation    *m_lineAnim     = nullptr;
-    QPushButton *m_pinBtn        = nullptr;
+    void toggleCompact();
+
+    QuotaPanel *m_panel5h          = nullptr;
+    QuotaPanel *m_panel7d          = nullptr;
+    QLabel     *m_statusLine       = nullptr;
+    QWidget    *m_titleBar         = nullptr;
+    QWidget    *m_activityLine     = nullptr;
+    QWidget    *m_collapsingBody   = nullptr;
+    QFrame     *m_sep1             = nullptr;
+    QFrame     *m_sep2             = nullptr;
+    QFrame     *m_sep3             = nullptr;
+    QWidget    *m_footer           = nullptr;
+    QGraphicsOpacityEffect *m_lineEffect  = nullptr;
+    QPropertyAnimation    *m_lineAnim    = nullptr;
+    QPushButton *m_pinBtn          = nullptr;
     QPoint      m_dragPos;
     QPoint      m_rememberedPos;
-    bool        m_hasRememberedPos = false;  // 최소화로 닫혔을 때 위치 저장
+    bool        m_hasRememberedPos = false;
 
-    QPropertyAnimation *m_opacityAnim      = nullptr;
-    bool                m_idleMode          = true;   // 시작 시 idle (활동 감지 전까지)
-    bool                m_opacityAtIdle     = true;   // 시작 시 투명 상태 (활동 감지 전까지)
-    bool                m_wasOpacityIdleBeforeDrag = false; // 드래그 직전 opacity idle 상태
+    QPropertyAnimation *m_opacityAnim             = nullptr;
+    bool                m_idleMode                 = true;
+    bool                m_opacityAtIdle            = true;
+    bool                m_wasOpacityIdleBeforeDrag = false;
+
+    // 갱신 상태
+    RefreshState m_refreshState  = RefreshState::Fetching;
+    QDateTime    m_lastFetch;
+    QDateTime    m_nextFetch;
+    QTimer      *m_justRefreshedTimer = nullptr;  // 1분 후 방금→시간 전환
 
     // 드래그 중 UI 업데이트 억제
-    bool     m_isDragging       = false;
-    bool     m_hasPendingData   = false;
-    UsageData m_pendingData;
-    bool     m_hasPendingCD     = false;   // countdowns pending
-    QString  m_pendingC5h;
-    QString  m_pendingC7d;
-    bool     m_hasPendingStatus = false;
-    QString  m_pendingStatus;
+    bool         m_isDragging             = false;
+    bool         m_hasPendingData         = false;
+    UsageData    m_pendingData;
+    bool         m_hasPendingCD           = false;
+    QString      m_pendingC5h;
+    QString      m_pendingC7d;
+    bool         m_hasPendingRefreshState = false;
+    RefreshState m_pendingRefreshState    = RefreshState::Fetching;
+    QDateTime    m_pendingLastFetch;
+    QDateTime    m_pendingNextFetch;
 };
 
 #endif // USAGEPOPUP_H

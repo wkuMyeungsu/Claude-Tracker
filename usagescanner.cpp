@@ -240,8 +240,31 @@ UsageData UsageScanner::calcUsageForRange(const QDateTime &rangeStartUtc,
 
     const QDateTime now = QDateTime::currentDateTimeUtc();
     const bool deltaMode = rangeStartUtc.isValid();
-    const QDateTime window5hStart = deltaMode ? rangeStartUtc : now.addSecs(-5LL * 3600);
-    const QDateTime window7dStart = deltaMode ? rangeStartUtc : now.addDays(-7);
+
+    // 리셋이 스캔 범위 안에서 발생했으면 리셋 시각 이후 토큰만 집계
+    // (리셋 전 토큰을 delta에 포함하면 mergeWithLastApi에서 이중 계산됨)
+    QDateTime window5hStart;
+    QDateTime window7dStart;
+    if (deltaMode) {
+        const bool r5InRange = reset5h.isValid()
+            && reset5h.toUTC() > rangeStartUtc
+            && reset5h.toUTC() <= now;
+        const bool r7InRange = reset7d.isValid()
+            && reset7d.toUTC() > rangeStartUtc
+            && reset7d.toUTC() <= now;
+        window5hStart = r5InRange ? reset5h.toUTC() : rangeStartUtc;
+        window7dStart = r7InRange ? reset7d.toUTC() : rangeStartUtc;
+    } else {
+        // full 모드: 리셋이 최근 5h/7d 안에 발생했으면 리셋 시각을 윈도우 시작으로
+        const bool r5Recent = reset5h.isValid()
+            && reset5h.toUTC() <= now
+            && reset5h.toUTC() >= now.addSecs(-5LL * 3600);
+        const bool r7Recent = reset7d.isValid()
+            && reset7d.toUTC() <= now
+            && reset7d.toUTC() >= now.addDays(-7);
+        window5hStart = r5Recent ? reset5h.toUTC() : now.addSecs(-5LL * 3600);
+        window7dStart = r7Recent ? reset7d.toUTC() : now.addDays(-7);
+    }
 
     qint64 rolling5hTokens = 0;
     qint64 rolling7dTokens = 0;

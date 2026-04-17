@@ -19,7 +19,7 @@ public:
 
 private slots:
     void onUsageFetched(UsageData data);
-    void onFetchFailed(QString reason);
+    void onFetchFailed(QString reason, bool networkError);
     void onLocalUsage(UsageData full, UsageData delta, bool hasDelta);
     void updateCountdowns();
     void onTrayActivated(QSystemTrayIcon::ActivationReason reason);

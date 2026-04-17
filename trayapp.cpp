@@ -27,11 +27,12 @@ TrayApp::TrayApp(QObject *parent)
     m_tray->setToolTip("ClaudeTray - 불러오는 중...");
     m_tray->show();
 
-    connect(m_popup, &UsagePopup::quitRequested, qApp, &QApplication::quit);
-
     connect(m_tray, &QSystemTrayIcon::activated,
             this, &TrayApp::onTrayActivated);
 
+    connect(m_apiClient, &UsageApiClient::fetchStarted, this, [this]() {
+        m_popup->setRefreshState(UsagePopup::RefreshState::Fetching);
+    });
     connect(m_apiClient, &UsageApiClient::usageFetched,
             this, &TrayApp::onUsageFetched);
     connect(m_apiClient, &UsageApiClient::fetchFailed,
@@ -88,9 +89,12 @@ void TrayApp::onUsageFetched(UsageData data)
     s.setValue("reset7d",  data.sevenDay.resetsAt.toString(Qt::ISODate));
 
     applyData(data);
+    m_popup->setRefreshState(UsagePopup::RefreshState::Refreshed,
+                             m_lastSuccessfulApiFetchAt,
+                             m_apiClient->nextScheduledFetchAt());
 }
 
-void TrayApp::onFetchFailed(QString reason)
+void TrayApp::onFetchFailed(QString reason, bool networkError)
 {
     m_apiFailed = true;
     m_lastFetchError = reason;
@@ -100,6 +104,11 @@ void TrayApp::onFetchFailed(QString reason)
         : m_scanner->calcFromLocal();
     m_current = local;
     applyData(local);
+
+    const auto state = networkError
+        ? UsagePopup::RefreshState::NetworkError
+        : UsagePopup::RefreshState::LocalFallback;
+    m_popup->setRefreshState(state);
 }
 
 // full, delta 는 백그라운드 스캔에서 이미 계산된 결과 → 메인 스레드 재스캔 없음
@@ -126,12 +135,6 @@ void TrayApp::applyData(const UsageData &data)
     m_popup->setCountdowns(
         formatCountdown(data.fiveHour.resetsAt),
         formatCountdown(data.sevenDay.resetsAt));
-    QString status;
-    if (!m_lastFetchError.isEmpty())
-        status = QString("API 실패: %1").arg(m_lastFetchError);
-    else if (!m_hasLastApiData)
-        status = "로컬 추정값";
-    m_popup->setStatus(status);
 
     // 7d >= 5h → 5h 기준, 7d < 5h → 7d 기준 (라인 색상과 동일 로직)
     const double dominant = (data.sevenDay.utilization >= data.fiveHour.utilization)
@@ -147,6 +150,7 @@ UsageData TrayApp::mergeWithLastApi(const UsageData &data) const
         return data;
 
     UsageData merged = m_lastApiData;
+    const QDateTime now = QDateTime::currentDateTimeUtc();
 
     // API resetsAt 가 이미 과거(리셋 발생)이면 주기로 다음 리셋 시각 추정
     auto estimateNext = [](const QDateTime &last, qint64 periodSecs) -> QDateTime {
@@ -161,7 +165,14 @@ UsageData TrayApp::mergeWithLastApi(const UsageData &data) const
     merged.fromApi = false;
     merged.fetchedAt = QDateTime::currentDateTime();
 
-    auto mergeQuota = [](const QuotaInfo &apiQuota, const QuotaInfo &deltaQuota, qint64 limitTokens) {
+    // 리셋이 발생한 경우 구 API 토큰을 0으로 처리 (리셋 후 신규 토큰만 집계)
+    const bool reset5hOccurred = m_lastApiData.fiveHour.resetsAt.isValid() &&
+                                  m_lastApiData.fiveHour.resetsAt.toUTC() <= now;
+    const bool reset7dOccurred = m_lastApiData.sevenDay.resetsAt.isValid() &&
+                                  m_lastApiData.sevenDay.resetsAt.toUTC() <= now;
+
+    auto mergeQuota = [](const QuotaInfo &apiQuota, const QuotaInfo &deltaQuota,
+                         qint64 limitTokens, bool resetOccurred) {
         if (!apiQuota.valid)
             return deltaQuota;
 
@@ -169,7 +180,10 @@ UsageData TrayApp::mergeWithLastApi(const UsageData &data) const
         if (limitTokens <= 0)
             return mergedQuota;
 
-        const qint64 apiTokens = qRound64(apiQuota.utilization * static_cast<double>(limitTokens));
+        // 리셋 발생 시 구 API 값 무시 → 리셋 후 델타만 반영
+        const qint64 apiTokens = resetOccurred
+            ? 0
+            : qRound64(apiQuota.utilization * static_cast<double>(limitTokens));
         const qint64 deltaTokens = qMax<qint64>(0, deltaQuota.rawTokens);
         mergedQuota.rawTokens = apiTokens + deltaTokens;
         mergedQuota.limitTokens = limitTokens;
@@ -177,8 +191,8 @@ UsageData TrayApp::mergeWithLastApi(const UsageData &data) const
         return mergedQuota;
     };
 
-    merged.fiveHour = mergeQuota(m_lastApiData.fiveHour, data.fiveHour, UsageScanner::planLimit5h());
-    merged.sevenDay = mergeQuota(m_lastApiData.sevenDay, data.sevenDay, UsageScanner::planLimit7d());
+    merged.fiveHour = mergeQuota(m_lastApiData.fiveHour, data.fiveHour, UsageScanner::planLimit5h(), reset5hOccurred);
+    merged.sevenDay = mergeQuota(m_lastApiData.sevenDay, data.sevenDay, UsageScanner::planLimit7d(), reset7dOccurred);
     merged.sevenDaySonnet = m_lastApiData.sevenDaySonnet;
 
     return merged;
@@ -192,6 +206,7 @@ void TrayApp::updateCountdowns()
     m_popup->setCountdowns(
         formatCountdown(m_current.fiveHour.resetsAt),
         formatCountdown(m_current.sevenDay.resetsAt));
+    m_popup->refreshNextFetch(m_apiClient->nextScheduledFetchAt());
 }
 
 void TrayApp::updateTooltip()

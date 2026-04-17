@@ -9,8 +9,10 @@
 #include <QUrl>
 #include <QtGlobal>
 
-static constexpr int POLL_INTERVAL_MS = 5 * 60 * 1000;
+static constexpr int POLL_INTERVAL_MS       = 5 * 60 * 1000;
 static constexpr int INITIAL_FETCH_DELAY_MS = 500;
+static constexpr int RETRY_DELAY_MS         = 30 * 1000;  // 실패 후 재시도 간격
+static constexpr int MAX_RETRIES            = 3;          // 이 횟수 초과 시 정상 주기 복귀
 
 static double normalizeUtilization(double utilization)
 {
@@ -57,13 +59,13 @@ void UsageApiClient::fetchUsage()
     scheduleNextPoll();
 
     if (CredentialsReader::isExpired()) {
-        emit fetchFailed("OAuth token expired");
+        emit fetchFailed("OAuth token expired", false);
         return;
     }
 
     const QString token = CredentialsReader::accessToken();
     if (token.isEmpty()) {
-        emit fetchFailed("No access token found");
+        emit fetchFailed("No access token found", false);
         return;
     }
 
@@ -73,6 +75,7 @@ void UsageApiClient::fetchUsage()
     req.setRawHeader("User-Agent", "ClaudeTray/1.0");
 
     m_pending = true;
+    emit fetchStarted();
     m_nam->get(req);
 }
 
@@ -88,9 +91,15 @@ void UsageApiClient::onReplyFinished(QNetworkReply *reply)
         const QString msg = root.contains("error")
             ? root["error"].toObject()["message"].toString()
             : reply->errorString();
-        emit fetchFailed(msg);
+        ++m_consecutiveFailures;
+        if (m_consecutiveFailures <= MAX_RETRIES)
+            scheduleNextPoll(RETRY_DELAY_MS);  // 5분 타이머를 30초로 앞당김
+        const bool isNetwork = (reply->error() != QNetworkReply::NoError);
+        emit fetchFailed(msg, isNetwork);
         return;
     }
+
+    m_consecutiveFailures = 0;
 
     auto parseQuota = [](const QJsonObject &obj) -> QuotaInfo {
         QuotaInfo q;

@@ -29,6 +29,7 @@ public:
 
     void setData(const QuotaInfo &info);
     void setCountdown(const QString &text);
+    void setCompact(bool compact);
 
 private:
     QLabel       *m_titleLabel;

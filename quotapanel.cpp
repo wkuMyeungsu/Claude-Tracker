@@ -126,3 +126,17 @@ void QuotaPanel::setCountdown(const QString &text)
 {
     m_resetLabel->setText(text);
 }
+
+void QuotaPanel::setCompact(bool compact)
+{
+    m_titleLabel->setVisible(!compact);
+    m_pctLabel->setVisible(!compact);
+    m_resetLabel->setVisible(!compact);
+
+    auto *vbox = static_cast<QVBoxLayout *>(layout());
+    if (compact)
+        vbox->setContentsMargins(6, 3, 6, 3);
+    else
+        vbox->setContentsMargins(14, 8, 14, 8);
+}
+
