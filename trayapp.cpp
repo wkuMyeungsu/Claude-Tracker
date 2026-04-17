@@ -120,6 +120,10 @@ void TrayApp::onLocalUsage(UsageData full, UsageData delta, bool hasDelta)
     m_current = merged;
     applyData(merged);
 
+    // API 실패 시에만 로컬 폴백 표시 (성공 후 로컬 증분은 🟢 유지)
+    if (m_apiFailed)
+        m_popup->setRefreshState(UsagePopup::RefreshState::LocalFallback);
+
     // 마지막 API resetsAt 가 이미 지났으면 즉시 재호출 → 정확한 새 리셋 시각 수신
     if (m_hasLastApiData) {
         const QDateTime now = QDateTime::currentDateTimeUtc();
@@ -230,17 +234,33 @@ QIcon TrayApp::makeIcon(double utilization)
     QPainter p(&px);
     p.setRenderHint(QPainter::Antialiasing);
 
-    QColor color;
-    if (utilization < USAGE_WARN_PCT / 100.0)
-        color = QColor(40, 167, 69);
-    else if (utilization < USAGE_CRIT_PCT / 100.0)
-        color = QColor(255, 193, 7);
-    else
-        color = QColor(220, 53, 69);
+    // Claude 브랜드 배경 (오렌지 둥근 사각형)
+    p.setBrush(QColor(0xCF, 0x7A, 0x47));
+    p.setPen(Qt::NoPen);
+    p.drawRoundedRect(1, 1, 18, 18, 4, 4);
 
-    p.setBrush(color);
-    p.setPen(QPen(color.darker(120), 1));
-    p.drawEllipse(2, 2, 18, 18);
+    // 눈 2개
+    p.setBrush(QColor(255, 255, 255, 210));
+    p.drawEllipse(4, 5, 4, 4);
+    p.drawEllipse(11, 5, 4, 4);
+
+    // 미소 호
+    p.setBrush(Qt::NoBrush);
+    p.setPen(QPen(QColor(255, 255, 255, 210), 1.5f, Qt::SolidLine, Qt::RoundCap));
+    p.drawArc(5, 9, 9, 6, 0, -180 * 16);
+
+    // 사용량 인디케이터 (우측하단 7×7)
+    QColor indColor;
+    if (utilization < USAGE_WARN_PCT / 100.0)
+        indColor = QColor(40, 167, 69);
+    else if (utilization < USAGE_CRIT_PCT / 100.0)
+        indColor = QColor(255, 193, 7);
+    else
+        indColor = QColor(220, 53, 69);
+
+    p.setPen(QPen(Qt::white, 1.0));
+    p.setBrush(indColor);
+    p.drawEllipse(14, 14, 7, 7);
 
     return QIcon(px);
 }

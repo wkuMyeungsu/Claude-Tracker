@@ -5,6 +5,7 @@
 #include <QDateTime>
 #include "usagedata.h"
 
+class QCheckBox;
 class QFrame;
 class QLabel;
 class QPropertyAnimation;
@@ -44,19 +45,20 @@ private:
 
     void toggleCompact();
 
-    QuotaPanel *m_panel5h          = nullptr;
-    QuotaPanel *m_panel7d          = nullptr;
-    QLabel     *m_statusLine       = nullptr;
-    QWidget    *m_titleBar         = nullptr;
-    QWidget    *m_activityLine     = nullptr;
-    QWidget    *m_collapsingBody   = nullptr;
-    QFrame     *m_sep1             = nullptr;
-    QFrame     *m_sep2             = nullptr;
-    QFrame     *m_sep3             = nullptr;
-    QWidget    *m_footer           = nullptr;
-    QGraphicsOpacityEffect *m_lineEffect  = nullptr;
-    QPropertyAnimation    *m_lineAnim    = nullptr;
-    QPushButton *m_pinBtn          = nullptr;
+    QuotaPanel  *m_panel5h          = nullptr;
+    QuotaPanel  *m_panel7d          = nullptr;
+    QLabel      *m_statusLine       = nullptr;
+    QWidget     *m_titleBar         = nullptr;
+    QWidget     *m_collapsingBody   = nullptr;
+    QFrame      *m_sep1             = nullptr;
+    QFrame      *m_sep2             = nullptr;
+    QFrame      *m_sep3             = nullptr;
+    QWidget     *m_footer           = nullptr;
+    QPushButton *m_pinBtn           = nullptr;
+    QPushButton *m_gearBtn          = nullptr;
+    QWidget     *m_settingsPanel    = nullptr;
+    QCheckBox   *m_autoFadeCheck    = nullptr;
+    bool         m_autoFade         = true;
     QPoint      m_dragPos;
     QPoint      m_rememberedPos;
     bool        m_hasRememberedPos = false;

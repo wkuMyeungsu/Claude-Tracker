@@ -2,8 +2,10 @@
 #include <QLabel>
 #include <QPainter>
 #include <QPen>
+#include <QLinearGradient>
 #include <QHBoxLayout>
 #include <QVBoxLayout>
+#include <QPropertyAnimation>
 
 // ── ThresholdBar ──────────────────────────────────────────────────────────────
 
@@ -11,12 +13,46 @@ ThresholdBar::ThresholdBar(QWidget *parent)
     : QWidget(parent)
 {
     setFixedHeight(12);
+
+    m_shimmerAnim = new QPropertyAnimation(this, "shimmerPos", this);
+    m_shimmerAnim->setStartValue(0.0f);
+    m_shimmerAnim->setEndValue(1.0f);
+    m_shimmerAnim->setDuration(1200);
+    m_shimmerAnim->setLoopCount(-1);
+    m_shimmerAnim->setEasingCurve(QEasingCurve::Linear);
+
+    m_fadeAnim = new QPropertyAnimation(this, "shimmerAlpha", this);
+    m_fadeAnim->setEndValue(0.0f);
+    m_fadeAnim->setDuration(400);
+    m_fadeAnim->setEasingCurve(QEasingCurve::Linear);
+    connect(m_fadeAnim, &QPropertyAnimation::finished, this, [this]() {
+        m_shimmerAnim->stop();
+        m_shimmerPos = 0.0f;
+        update();
+    });
 }
 
 void ThresholdBar::setValue(int pct)
 {
     m_value = qBound(0, pct, 100);
     update();
+}
+
+void ThresholdBar::setActive(bool active)
+{
+    if (m_active == active) return;
+    m_active = active;
+
+    if (active) {
+        m_fadeAnim->stop();
+        m_shimmerAlpha = 1.0f;
+        m_shimmerAnim->setLoopCount(-1);
+        if (m_shimmerAnim->state() != QAbstractAnimation::Running)
+            m_shimmerAnim->start();
+    } else {
+        m_fadeAnim->setStartValue(m_shimmerAlpha);
+        m_fadeAnim->start();
+    }
 }
 
 void ThresholdBar::paintEvent(QPaintEvent *)
@@ -32,33 +68,43 @@ void ThresholdBar::paintEvent(QPaintEvent *)
     p.setBrush(QColor("#e9ecef"));
     p.drawRoundedRect(r, radius, radius);
 
-    // 채움 색상 (임계값 기준)
+    // 채움 색상
     QColor fillColor;
     if (m_value < USAGE_WARN_PCT)      fillColor = QColor("#28a745");
     else if (m_value < USAGE_CRIT_PCT) fillColor = QColor("#ffc107");
     else                               fillColor = QColor("#dc3545");
 
-    // 채움 바
     if (m_value > 0) {
         const int fillW = qRound(r.width() * m_value / 100.0);
-        p.setBrush(fillColor);
-        p.drawRoundedRect(QRect(r.left(), r.top(), fillW, r.height()), radius, radius);
+        const QRect fillRect(r.left(), r.top(), fillW, r.height());
+
+        // 유리 그라데이션 채움
+        QLinearGradient glass(0, r.top(), 0, r.bottom());
+        glass.setColorAt(0.0, fillColor.lighter(130));
+        glass.setColorAt(0.5, fillColor);
+        glass.setColorAt(1.0, fillColor.darker(110));
+
+        p.setPen(Qt::NoPen);
+        p.setBrush(glass);
+        p.drawRoundedRect(fillRect, radius, radius);
+
+        // shimmer 오버레이
+        if (m_shimmerAlpha > 0.0f && m_shimmerPos > 0.0f) {
+            const int cx = r.left() + qRound(fillW * m_shimmerPos);
+            const int hw = 22;
+
+            QLinearGradient sg(cx - hw, 0, cx + hw, 0);
+            const int alpha = qRound(90 * m_shimmerAlpha);
+            sg.setColorAt(0.0, QColor(255, 255, 255, 0));
+            sg.setColorAt(0.5, QColor(255, 255, 255, alpha));
+            sg.setColorAt(1.0, QColor(255, 255, 255, 0));
+
+            p.setClipRect(fillRect);
+            p.fillRect(r, sg);
+            p.setClipping(false);
+        }
     }
 
-    // 임계 실선 (희미하게)
-    p.setRenderHint(QPainter::Antialiasing, false);
-
-    struct Threshold { int pct; QColor color; };
-    static const Threshold thresholds[] = {
-        { USAGE_WARN_PCT, QColor(230, 126, 34, 140) },   // 주황
-        { USAGE_CRIT_PCT, QColor(192, 57,  43, 140) },   // 빨강
-    };
-
-    for (const auto &t : thresholds) {
-        const int x = qRound(r.width() * t.pct / 100.0);
-        p.setPen(QPen(t.color, 1));
-        p.drawLine(x, r.top(), x, r.bottom());
-    }
 }
 
 // ── QuotaPanel ────────────────────────────────────────────────────────────────
@@ -125,6 +171,11 @@ void QuotaPanel::setData(const QuotaInfo &info)
 void QuotaPanel::setCountdown(const QString &text)
 {
     m_resetLabel->setText(text);
+}
+
+void QuotaPanel::setActive(bool active)
+{
+    m_bar->setActive(active);
 }
 
 void QuotaPanel::setCompact(bool compact)
