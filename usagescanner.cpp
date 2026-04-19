@@ -54,9 +54,16 @@ UsageScanner::UsageScanner(QObject *parent)
 
     refreshWatchList();
 
-    // 5분마다 새 프로젝트 폴더 자동 감지 (QFileSystemWatcher 재귀 불가 우회)
+    // 앱 시작 시 기존 JSONL 파일 즉시 스캔 (파일 변경 이벤트 없이도 초기값 표시)
+    QTimer::singleShot(200, this, &UsageScanner::doScan);
+
+    // 5분마다 새 프로젝트 폴더 자동 감지 + 스캔 (QFileSystemWatcher 재귀 불가 우회,
+    // Windows에서 watcher 이벤트 누락 시 폴백)
     auto *watchTimer = new QTimer(this);
-    connect(watchTimer, &QTimer::timeout, this, &UsageScanner::refreshWatchList);
+    connect(watchTimer, &QTimer::timeout, this, [this]() {
+        refreshWatchList();
+        m_debounceTimer->start();
+    });
     watchTimer->start(WATCHLIST_MS);
 }
 
@@ -82,10 +89,13 @@ void UsageScanner::onDirectoryChanged(const QString &)
     m_debounceTimer->start();   // 타이머 리셋: 2초 후 스캔
 }
 
-void UsageScanner::onFileChanged(const QString &)
+void UsageScanner::onFileChanged(const QString &path)
 {
+    // Windows에서 fileChanged 이벤트 후 파일이 watch list에서 제거될 수 있어 재등록
+    if (!path.isEmpty())
+        m_watcher->addPath(path);
     emit activityDetected();    // 즉시 알림 (투명도 제어용)
-    m_debounceTimer->start();   // 타이머 리셋: 2초 후 스캔
+    m_debounceTimer->start();   // 타이머 리셋: 0.3초 후 스캔
 }
 
 void UsageScanner::refreshWatchList()
@@ -186,7 +196,7 @@ UsageData UsageScanner::calcUsageForRange(const QDateTime &rangeStartUtc,
                                            const QDateTime &reset7d)
 {
     const QString projectsDir = CredentialsReader::claudeDir() + "/projects";
-    QSet<QString> seenUuids;
+    QSet<QString> seenRequestIds;
     QVector<TokenRecord> records;
 
     QDirIterator it(projectsDir, {"*.jsonl"}, QDir::Files, QDirIterator::Subdirectories);
@@ -204,12 +214,14 @@ UsageData UsageScanner::calcUsageForRange(const QDateTime &rangeStartUtc,
             if (obj["type"].toString() != "assistant")
                 continue;
 
-            // uuid 로 중복 레코드 제거
+            // requestId 기준 중복 제거 (같은 응답이 thinking/tool_use 등 여러 줄로 기록됨)
+            const QString rid = obj["requestId"].toString();
             const QString uid = obj["uuid"].toString();
-            if (!uid.isEmpty()) {
-                if (seenUuids.contains(uid))
+            const QString dedupKey = rid.isEmpty() ? uid : rid;
+            if (!dedupKey.isEmpty()) {
+                if (seenRequestIds.contains(dedupKey))
                     continue;
-                seenUuids.insert(uid);
+                seenRequestIds.insert(dedupKey);
             }
 
             const QJsonObject usage = obj["message"].toObject()["usage"].toObject();

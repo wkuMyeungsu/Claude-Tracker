@@ -5,7 +5,7 @@
 #include <QDateTime>
 #include "usagedata.h"
 
-class QCheckBox;
+class ToggleSwitch;
 class QFrame;
 class QLabel;
 class QPropertyAnimation;
@@ -28,6 +28,7 @@ public:
     void setRefreshState(RefreshState state, QDateTime lastFetch = {}, QDateTime nextFetch = {});
     void refreshNextFetch(QDateTime nextFetch);   // 상태 변경 없이 "다음 Xm 후" 갱신
     void showNearTray(const QPoint &trayPos);
+    void hideAndSavePos();
 
     void setActive();
     void setIdle();
@@ -57,7 +58,7 @@ private:
     QPushButton *m_pinBtn           = nullptr;
     QPushButton *m_gearBtn          = nullptr;
     QWidget     *m_settingsPanel    = nullptr;
-    QCheckBox   *m_autoFadeCheck    = nullptr;
+    ToggleSwitch *m_autoFadeCheck   = nullptr;
     bool         m_autoFade         = true;
     QPoint      m_dragPos;
     QPoint      m_rememberedPos;
@@ -73,6 +74,7 @@ private:
     QDateTime    m_lastFetch;
     QDateTime    m_nextFetch;
     QTimer      *m_justRefreshedTimer = nullptr;  // 1분 후 방금→시간 전환
+    QTimer      *m_fadeTimer          = nullptr;  // setIdle 후 10s 투명화 딜레이
 
     // 드래그 중 UI 업데이트 억제
     bool         m_isDragging             = false;

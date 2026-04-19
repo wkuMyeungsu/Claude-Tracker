@@ -27,6 +27,8 @@ set(PROJECT_SOURCES
     trayapp.cpp
     usagepopup.h
     usagepopup.cpp
+    toggleswitch.h
+    toggleswitch.cpp
 )
 
 if(${QT_VERSION_MAJOR} GREATER_EQUAL 6)

@@ -65,7 +65,7 @@ void TrayApp::onTrayActivated(QSystemTrayIcon::ActivationReason reason)
         return;
 
     if (m_popup->isVisible()) {
-        m_popup->hide();
+        m_popup->hideAndSavePos();
     } else {
         m_popup->showNearTray(QCursor::pos());
     }
@@ -228,40 +228,81 @@ void TrayApp::updateTooltip()
 
 QIcon TrayApp::makeIcon(double utilization)
 {
-    QPixmap px(22, 22);
+    const int SZ = 44;
+    const double DPR = 2.0;
+
+    QPixmap px(SZ, SZ);
     px.fill(Qt::transparent);
+    px.setDevicePixelRatio(DPR);
 
     QPainter p(&px);
-    p.setRenderHint(QPainter::Antialiasing);
+    p.setRenderHint(QPainter::Antialiasing, true);
 
-    // Claude 브랜드 배경 (오렌지 둥근 사각형)
-    p.setBrush(QColor(0xCF, 0x7A, 0x47));
+    // ── 1. 배경 ───────────────────────────────────────
+    QColor bg(0xF4, 0x8A, 0x6A);
+    p.setBrush(bg);
     p.setPen(Qt::NoPen);
-    p.drawRoundedRect(1, 1, 18, 18, 4, 4);
 
-    // 눈 2개
-    p.setBrush(QColor(255, 255, 255, 210));
-    p.drawEllipse(4, 5, 4, 4);
-    p.drawEllipse(11, 5, 4, 4);
+    QRectF rect(2.5, 2.5, 18.0, 18.0);
+    p.drawRoundedRect(rect, 5.2, 5.2);
 
-    // 미소 호
-    p.setBrush(Qt::NoBrush);
-    p.setPen(QPen(QColor(255, 255, 255, 210), 1.5f, Qt::SolidLine, Qt::RoundCap));
-    p.drawArc(5, 9, 9, 6, 0, -180 * 16);
+    // ── 2. Claude 스타일 방사형 ───────────────────────
+    struct Spoke { double angle; double len; double alpha; };
 
-    // 사용량 인디케이터 (우측하단 7×7)
+    const Spoke spokes[] = {
+                            {   0.0, 6.8, 1.00 },
+                            {  50.0, 6.2, 0.92 },
+                            { 100.0, 5.2, 0.78 },
+                            { 150.0, 4.6, 0.62 },
+                            { 205.0, 5.4, 0.78 },
+                            { 255.0, 6.3, 0.92 },
+                            };
+
+    const double cx = 11.0;
+    const double cy = 11.0;
+
+    const double innerGap = 3.6;
+    const double strokeW = 2.2;
+
+    for (const auto &sp : spokes) {
+        double rad = qDegreesToRadians(sp.angle - 90.0);
+
+        double cos_ = std::cos(rad);
+        double sin_ = std::sin(rad);
+
+        double x1 = cx + cos_ * innerGap;
+        double y1 = cy + sin_ * innerGap;
+
+        double x2 = cx + cos_ * (innerGap + sp.len);
+        double y2 = cy + sin_ * (innerGap + sp.len);
+
+        QPen pen(QColor(255, 255, 255, int(sp.alpha * 255)),
+                 strokeW,
+                 Qt::SolidLine,
+                 Qt::RoundCap);
+
+        p.setPen(pen);
+        p.drawLine(QPointF(x1, y1), QPointF(x2, y2));
+    }
+
+    // ── 3. 사용량 인디케이터 (개선 버전) ───────────────
     QColor indColor;
+
     if (utilization < USAGE_WARN_PCT / 100.0)
-        indColor = QColor(40, 167, 69);
+        indColor = QColor(60, 180, 90);       // 기존보다 약간 부드럽게
     else if (utilization < USAGE_CRIT_PCT / 100.0)
-        indColor = QColor(255, 193, 7);
+        indColor = QColor(240, 190, 60);
     else
-        indColor = QColor(220, 53, 69);
+        indColor = QColor(220, 70, 70);
 
-    p.setPen(QPen(Qt::white, 1.0));
+    // 외곽선 제거 → 노이즈 감소
+    p.setPen(Qt::NoPen);
     p.setBrush(indColor);
-    p.drawEllipse(14, 14, 7, 7);
 
+    // 위치 살짝 바깥쪽으로 이동 + 크기 축소
+    p.drawEllipse(QPointF(18.2, 18.2), 2.2, 2.2);
+
+    p.end();
     return QIcon(px);
 }
 

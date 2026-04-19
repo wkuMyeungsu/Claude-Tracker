@@ -1,7 +1,7 @@
 #include "usagepopup.h"
 #include "quotapanel.h"
 #include <QApplication>
-#include <QCheckBox>
+#include "toggleswitch.h"
 #include <QEasingCurve>
 #include <QFrame>
 #include <QHBoxLayout>
@@ -57,6 +57,8 @@ UsagePopup::UsagePopup(QWidget *parent)
     )");
 
     connect(m_pinBtn, &QPushButton::toggled, this, [this](bool pinned) {
+        const QPoint oldPos = pos();  // setWindowFlags() 전에 저장 (재생성 후 OS가 위치 변경)
+
         Qt::WindowFlags flags = windowFlags();
         if (pinned)
             flags |= Qt::WindowStaysOnTopHint;
@@ -65,6 +67,15 @@ UsagePopup::UsagePopup(QWidget *parent)
         setWindowFlags(flags);
         show();   // setWindowFlags() 호출 시 창이 숨겨지므로 재호출 필수
         raise();
+        activateWindow();
+
+        // oldPos 기준으로 availableGeometry 내에 clamp (작업표시줄 침범 방지)
+        QScreen *screen = QApplication::screenAt(oldPos);
+        if (!screen) screen = QApplication::primaryScreen();
+        const QRect avail = screen->availableGeometry();
+        const int x = qBound(avail.left(), oldPos.x(), avail.right()  - width());
+        const int y = qBound(avail.top(),  oldPos.y(), avail.bottom() - height());
+        move(x, y);
         // setWindowFlags()가 hideEvent를 트리거해 opacity를 1.0으로 리셋함
         // idle 상태였다면 핀 ON 시에만 다시 투명화
         if (pinned && m_autoFade && m_opacityAtIdle)
@@ -157,29 +168,58 @@ UsagePopup::UsagePopup(QWidget *parent)
     auto *settingsLayout = new QVBoxLayout(m_settingsPanel);
     settingsLayout->setContentsMargins(6, 6, 6, 6);
 
-    m_autoFadeCheck = new QCheckBox("핀 고정 시 자동 투명화");
+    auto *fadeRow   = new QHBoxLayout;
+    auto *fadeLabel = new QLabel("핀 고정 시 자동 투명화");
+    fadeLabel->setStyleSheet("font-size: 10px; color: #444;");
+    m_autoFadeCheck = new ToggleSwitch;
     m_autoFadeCheck->setChecked(m_autoFade);
-    m_autoFadeCheck->setStyleSheet("font-size: 10px; color: #444;");
-    settingsLayout->addWidget(m_autoFadeCheck);
+    fadeRow->addWidget(fadeLabel);
+    fadeRow->addStretch();
+    fadeRow->addWidget(m_autoFadeCheck);
+    settingsLayout->addLayout(fadeRow);
     m_settingsPanel->setVisible(false);
 
     connect(m_gearBtn, &QPushButton::toggled, this, [this](bool open) {
-        m_settingsPanel->setVisible(open);
+        if (open) {
+            m_settingsPanel->setMaximumHeight(QWIDGETSIZE_MAX);
+            m_settingsPanel->show();
+        } else {
+            m_settingsPanel->setMaximumHeight(0);
+            m_settingsPanel->hide();
+        }
+        m_collapsingBody->layout()->invalidate();
+        m_collapsingBody->adjustSize();
         adjustSize();
     });
 
-    connect(m_autoFadeCheck, &QCheckBox::toggled, this, [this](bool checked) {
+    connect(m_autoFadeCheck, &ToggleSwitch::toggled, this, [this](bool checked) {
         m_autoFade = checked;
         QSettings s("ClaudeTray", "ClaudeTray");
         s.setValue("autoFade", checked);
-        // 즉시 반영: 토글 OFF 시 불투명으로 복원
-        if (!checked && m_opacityAtIdle)
+        if (!checked && m_opacityAtIdle) {
+            m_opacityAtIdle = false;
             animateOpacityTo(1.0);
+        } else if (checked && m_pinBtn->isChecked() && m_idleMode) {
+            m_opacityAtIdle = true;
+            animateOpacityTo(0.6);
+        }
     });
 
     m_justRefreshedTimer = new QTimer(this);
     m_justRefreshedTimer->setSingleShot(true);
     connect(m_justRefreshedTimer, &QTimer::timeout, this, &UsagePopup::updateStatusLine);
+
+    m_fadeTimer = new QTimer(this);
+    m_fadeTimer->setSingleShot(true);
+    m_fadeTimer->setInterval(10'000);
+    connect(m_fadeTimer, &QTimer::timeout, this, [this]() {
+        if (!m_idleMode) return;
+        if (!m_pinBtn->isChecked()) return;
+        if (!m_autoFade) return;
+        m_opacityAtIdle = true;
+        if (isVisible())
+            animateOpacityTo(0.6);
+    });
 
     m_collapsingBody = new QWidget;
     auto *bodyLayout = new QVBoxLayout(m_collapsingBody);
@@ -288,8 +328,10 @@ void UsagePopup::updateStatusLine()
         if (secs < 60) {
             text = "🟢 방금 갱신";
         } else {
-            const QString t = m_lastFetch.toString("HH:mm");
-            text = QString("🟢 %1 갱신").arg(t);
+            const QString t = m_nextFetch.isValid()
+                ? m_nextFetch.toString("HH:mm")
+                : m_lastFetch.toString("HH:mm");
+            text = QString("🟢 %1 갱신 예정").arg(t);
         }
         break;
     }
@@ -372,7 +414,7 @@ bool UsagePopup::eventFilter(QObject *obj, QEvent *event)
         if (me->button() == Qt::LeftButton) {
             m_isDragging = false;
             applyPending();
-            if (m_wasOpacityIdleBeforeDrag && m_pinBtn->isChecked()) animateOpacityTo(0.6);  // 핀 고정 시만 복원
+            if (m_wasOpacityIdleBeforeDrag && m_pinBtn->isChecked() && m_autoFade) animateOpacityTo(0.6);
             return true;
         }
     }
@@ -382,6 +424,7 @@ bool UsagePopup::eventFilter(QObject *obj, QEvent *event)
 
 void UsagePopup::setActive()
 {
+    m_fadeTimer->stop();  // 대기 중인 투명화 타이머 취소
     m_idleMode      = false;
     m_opacityAtIdle = false;
 
@@ -401,15 +444,7 @@ void UsagePopup::setIdle()
     m_panel5h->setActive(false);
     m_panel7d->setActive(false);
 
-    // 10초 후 투명화 — 핀 고정 + 자동 투명화 ON 상태일 때만
-    QTimer::singleShot(10'000, this, [this]() {
-        if (!m_idleMode) return;
-        if (!m_pinBtn->isChecked()) return;
-        if (!m_autoFade) return;
-        m_opacityAtIdle = true;
-        if (isVisible())
-            animateOpacityTo(0.6);
-    });
+    m_fadeTimer->start();  // 10s 후 투명화 (이미 대기 중이면 재시작)
 }
 
 void UsagePopup::hideEvent(QHideEvent *event)
@@ -459,4 +494,11 @@ void UsagePopup::showNearTray(const QPoint &trayPos)
     // 팝업이 닫혀 있는 사이에 LED가 이미 회색이 된 경우 → 핀 고정 시만 0.5초 후 투명 적용
     if (m_opacityAtIdle && m_pinBtn->isChecked() && m_autoFade)
         QTimer::singleShot(500, this, [this]() { if (isVisible() && m_pinBtn->isChecked() && m_autoFade) animateOpacityTo(0.6); });
+}
+
+void UsagePopup::hideAndSavePos()
+{
+    m_rememberedPos    = pos();
+    m_hasRememberedPos = true;
+    hide();
 }
