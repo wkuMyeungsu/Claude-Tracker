@@ -3,8 +3,8 @@
 #include <QPainter>
 #include <QPainterPath>
 
-static constexpr int   TRACK_H   = 14;
-static constexpr int   KNOB_D    = 18;
+static constexpr int   TRACK_H   = 10;
+static constexpr int   KNOB_D    = 14;
 static constexpr int   ANIM_MS   = 150;
 static const QColor    CLR_ON    { 0x4A, 0x9E, 0xFF };  // 파란색 계열
 static const QColor    CLR_OFF   { 0xC0, 0xC0, 0xC0 };

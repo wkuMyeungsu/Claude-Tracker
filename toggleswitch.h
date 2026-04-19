@@ -14,7 +14,7 @@ public:
 
     bool     isChecked() const { return m_checked; }
     void     setChecked(bool checked);
-    QSize    sizeHint() const override { return {38, 22}; }
+    QSize    sizeHint() const override { return {30, 22}; }
 
 signals:
     void toggled(bool checked);
