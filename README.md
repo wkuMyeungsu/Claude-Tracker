@@ -2,6 +2,8 @@
 
 Windows 시스템 트레이에서 Claude Code 사용량(quota)을 실시간으로 모니터링하는 Qt6 앱.
 
+[![Download Windows](https://img.shields.io/badge/Download-Windows_v1.0.0-0078D6?style=for-the-badge&logo=windows&logoColor=white)](https://github.com/wkuMyeungsu/Claude-Tracker/releases/tag/v1.0.0)
+
 ![badge](https://img.shields.io/badge/Qt-6.x-green) ![badge](https://img.shields.io/badge/platform-Windows-blue) ![badge](https://img.shields.io/badge/language-C%2B%2B17-orange)
 
 ---
