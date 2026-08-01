@@ -27,6 +27,7 @@ struct UsageData {
     QuotaInfo sevenDay;
     QuotaInfo sevenDaySonnet;
     ExtraUsageInfo extraUsage;
+    QString   recentModel;
     QDateTime fetchedAt;
     bool      fromApi = false;   // true=API 정확값, false=로컬 추정
 };

@@ -1,6 +1,7 @@
 #include "usagescanner.h"
 #include "credentialsreader.h"
 #include <QDateTime>
+#include <QTimeZone>
 #include <QDebug>
 #include <QDirIterator>
 #include <QFile>
@@ -34,7 +35,11 @@ static constexpr int WATCHLIST_MS     = 5 * 60 * 1000;  // 감시 목록 갱신 
 
 struct TokenRecord {
     QDateTime ts;
-    qint64 tokens = 0;
+    QString model;
+    qint64 input = 0;
+    qint64 output = 0;
+    qint64 cacheWrite = 0;
+    qint64 cacheRead = 0;
 };
 
 UsageScanner::UsageScanner(QObject *parent)
@@ -224,7 +229,10 @@ UsageData UsageScanner::calcUsageForRange(const QDateTime &rangeStartUtc,
                 seenRequestIds.insert(dedupKey);
             }
 
-            const QJsonObject usage = obj["message"].toObject()["usage"].toObject();
+            QJsonObject usage = obj["usage"].toObject();
+            if (usage.isEmpty()) {
+                usage = obj["message"].toObject()["usage"].toObject();
+            }
             if (usage.isEmpty())
                 continue;
 
@@ -234,14 +242,15 @@ UsageData UsageScanner::calcUsageForRange(const QDateTime &rangeStartUtc,
                 ts = QDateTime::fromString(tsStr, Qt::ISODate);
             if (!ts.isValid())
                 continue;
+            ts.setTimeZone(QTimeZone::UTC);
 
-            const qint64 tokens =
-                usage["input_tokens"].toVariant().toLongLong() +
-                usage["output_tokens"].toVariant().toLongLong() +
-                usage["cache_creation_input_tokens"].toVariant().toLongLong() +
-                qRound64(usage["cache_read_input_tokens"].toVariant().toLongLong() * 0.1);
+            const QString model = obj["message"].toObject()["model"].toString();
+            qint64 input = usage["input_tokens"].toVariant().toLongLong();
+            qint64 output = usage["output_tokens"].toVariant().toLongLong();
+            qint64 cacheWrite = usage["cache_creation_input_tokens"].toVariant().toLongLong();
+            qint64 cacheRead = usage["cache_read_input_tokens"].toVariant().toLongLong();
 
-            records.append({ts.toUTC(), tokens});
+            records.append({ts, model, input, output, cacheWrite, cacheRead});
         }
     }
 
@@ -287,12 +296,32 @@ UsageData UsageScanner::calcUsageForRange(const QDateTime &rangeStartUtc,
 
     qint64 rolling5hTokens = 0;
     qint64 rolling7dTokens = 0;
+    double rolling5hCost = 0.0;
+    double rolling7dCost = 0.0;
+
+    // 추가 결제 크레딧 누적을 위해 당월 1일 UTC 시각 계산
+    QDateTime billingCycleStart(QDate(now.date().year(), now.date().month(), 1), QTime(0, 0), QTimeZone::UTC);
+    double monthlyAccumulatedCost = 0.0;
 
     for (const auto &record : records) {
-        if (record.ts >= window7dStart)
-            rolling7dTokens += record.tokens;
-        if (record.ts >= window5hStart)
-            rolling5hTokens += record.tokens;
+        qint64 discountedTokens = record.input + record.output + record.cacheWrite + qRound64(record.cacheRead * 0.1);
+        ModelPricing p = getPricingForModel(record.model);
+        double cost = (record.input * p.inputRate +
+                       record.output * p.outputRate +
+                       record.cacheWrite * p.cacheWriteRate +
+                       record.cacheRead * p.cacheReadRate) / 1000000.0;
+
+        if (record.ts >= window7dStart) {
+            rolling7dTokens += discountedTokens;
+            rolling7dCost += cost;
+        }
+        if (record.ts >= window5hStart) {
+            rolling5hTokens += discountedTokens;
+            rolling5hCost += cost;
+        }
+        if (record.ts >= billingCycleStart) {
+            monthlyAccumulatedCost += cost;
+        }
     }
 
     const QString planType = CredentialsReader::subscriptionType();
@@ -304,11 +333,18 @@ UsageData UsageScanner::calcUsageForRange(const QDateTime &rangeStartUtc,
              << "rolling5h=" << rolling5hTokens
              << "rolling7d=" << rolling7dTokens
              << "limit5h=" << limit5h
-             << "limit7d=" << limit7d;
+             << "limit7d=" << limit7d
+             << "rolling5hCost=" << rolling5hCost
+             << "rolling7dCost=" << rolling7dCost
+             << "monthlyAccumulatedCost=" << monthlyAccumulatedCost;
 
     UsageData data;
     data.fromApi  = false;
     data.fetchedAt = QDateTime::currentDateTime();
+    data.recentModel = records.isEmpty() ? "" : records.last().model;
+
+    data.extraUsage.enabled = true;
+    data.extraUsage.usedCredits = deltaMode ? rolling5hCost : monthlyAccumulatedCost;
 
     if (rolling5hTokens > 0 || limit5h > 0) {
         data.fiveHour.rawTokens   = rolling5hTokens;
@@ -331,4 +367,92 @@ UsageData UsageScanner::calcUsageForRange(const QDateTime &rangeStartUtc,
     }
 
     return data;
+}
+
+ModelPricing UsageScanner::getPricingForModel(const QString &modelName)
+{
+    // 계열별 버전별 요율 저장 맵
+    // QMap<FamilyName, QMap<VersionName, ModelPricing>>
+    static QMap<QString, QMap<QString, ModelPricing>> pricingTree;
+    static bool loaded = false;
+
+    if (!loaded) {
+        QFile file(":/model_pricing.json");
+        if (file.open(QIODevice::ReadOnly)) {
+            QJsonObject root = QJsonDocument::fromJson(file.readAll()).object();
+            for (auto familyIt = root.begin(); familyIt != root.end(); ++familyIt) {
+                QString family = familyIt.key();
+                QJsonObject versionObj = familyIt.value().toObject();
+                QMap<QString, ModelPricing> versionMap;
+                
+                for (auto versionIt = versionObj.begin(); versionIt != versionObj.end(); ++versionIt) {
+                    QString version = versionIt.key();
+                    QJsonObject rateObj = versionIt.value().toObject();
+                    
+                    ModelPricing p;
+                    p.inputRate = rateObj["input_rate"].toDouble();
+                    p.outputRate = rateObj["output_rate"].toDouble();
+                    p.cacheWriteRate = rateObj["cache_write_rate"].toDouble();
+                    p.cacheReadRate = rateObj["cache_read_rate"].toDouble();
+                    
+                    versionMap[version] = p;
+                }
+                pricingTree[family] = versionMap;
+            }
+            loaded = true;
+        }
+    }
+
+    // 하드코딩 디폴트 요율 (Sonnet 5 기준)
+    ModelPricing defaultPricing;
+    defaultPricing.inputRate = 3.00;
+    defaultPricing.outputRate = 15.00;
+    defaultPricing.cacheWriteRate = 3.75;
+    defaultPricing.cacheReadRate = 0.30;
+
+    const QString lowerName = modelName.toLower();
+    
+    // 1단계: 계열(Family) 매칭
+    QString matchedFamily;
+    for (auto it = pricingTree.begin(); it != pricingTree.end(); ++it) {
+        if (lowerName.contains(it.key())) {
+            matchedFamily = it.key();
+            break;
+        }
+    }
+
+    if (matchedFamily.isEmpty()) {
+        if (pricingTree.contains("sonnet") && pricingTree["sonnet"].contains("5")) {
+            return pricingTree["sonnet"]["5"];
+        }
+        return defaultPricing;
+    }
+
+    // 2단계: 버전(Version) 매칭 (Longest match 기법)
+    const QMap<QString, ModelPricing> &versionMap = pricingTree[matchedFamily];
+    QString bestVersionKey;
+    int bestVersionLength = 0;
+
+    for (auto it = versionMap.begin(); it != versionMap.end(); ++it) {
+        const QString &version = it.key();
+        if (lowerName.contains(version)) {
+            if (version.length() > bestVersionLength) {
+                bestVersionKey = version;
+                bestVersionLength = version.length();
+            }
+        }
+    }
+
+    if (bestVersionLength > 0) {
+        return versionMap.value(bestVersionKey);
+    }
+
+    // 버전을 찾지 못한 경우의 폴백
+    if (!versionMap.isEmpty()) {
+        if (versionMap.contains("5")) return versionMap.value("5");
+        if (versionMap.contains("3.5")) return versionMap.value("3.5");
+        return versionMap.begin().value();
+    }
+
+    return defaultPricing;
 }

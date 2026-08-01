@@ -1,0 +1,84 @@
+{
+  "fable": {
+    "5": {
+      "input_rate": 10.00,
+      "output_rate": 50.00,
+      "cache_write_rate": 12.50,
+      "cache_read_rate": 1.00
+    }
+  },
+  "mythos": {
+    "5": {
+      "input_rate": 10.00,
+      "output_rate": 50.00,
+      "cache_write_rate": 12.50,
+      "cache_read_rate": 1.00
+    }
+  },
+  "opus": {
+    "5": {
+      "input_rate": 5.00,
+      "output_rate": 25.00,
+      "cache_write_rate": 6.25,
+      "cache_read_rate": 0.50
+    },
+    "4.8": {
+      "input_rate": 15.00,
+      "output_rate": 75.00,
+      "cache_write_rate": 18.75,
+      "cache_read_rate": 1.50
+    },
+    "3": {
+      "input_rate": 15.00,
+      "output_rate": 75.00,
+      "cache_write_rate": 18.75,
+      "cache_read_rate": 1.50
+    }
+  },
+  "sonnet": {
+    "5": {
+      "input_rate": 3.00,
+      "output_rate": 15.00,
+      "cache_write_rate": 3.75,
+      "cache_read_rate": 0.30
+    },
+    "4.6": {
+      "input_rate": 3.00,
+      "output_rate": 15.00,
+      "cache_write_rate": 3.75,
+      "cache_read_rate": 0.30
+    },
+    "3.5": {
+      "input_rate": 3.00,
+      "output_rate": 15.00,
+      "cache_write_rate": 3.75,
+      "cache_read_rate": 0.30
+    },
+    "3": {
+      "input_rate": 3.00,
+      "output_rate": 15.00,
+      "cache_write_rate": 3.75,
+      "cache_read_rate": 0.30
+    }
+  },
+  "haiku": {
+    "4.5": {
+      "input_rate": 1.00,
+      "output_rate": 5.00,
+      "cache_write_rate": 1.25,
+      "cache_read_rate": 0.10
+    },
+    "3.5": {
+      "input_rate": 1.00,
+      "output_rate": 5.00,
+      "cache_write_rate": 1.25,
+      "cache_read_rate": 0.10
+    },
+    "3": {
+      "input_rate": 0.25,
+      "output_rate": 1.25,
+      "cache_write_rate": 0.30,
+      "cache_read_rate": 0.03
+    }
+  }
+}

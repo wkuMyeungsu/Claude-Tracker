@@ -29,6 +29,7 @@ set(PROJECT_SOURCES
     usagepopup.cpp
     toggleswitch.h
     toggleswitch.cpp
+    resources.qrc
 )
 
 if(${QT_VERSION_MAJOR} GREATER_EQUAL 6)

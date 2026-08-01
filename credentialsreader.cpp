@@ -19,19 +19,19 @@ QJsonObject CredentialsReader::readJson()
 
 QString CredentialsReader::accessToken()
 {
-    return readJson()["claudeAiOauth"].toObject()["accessToken"].toString();
+    return readJson().value("claudeAiOauth").toObject().value("accessToken").toString();
 }
 
 QString CredentialsReader::subscriptionType()
 {
     // "pro", "max_5x", "max_20x"
-    return readJson()["claudeAiOauth"].toObject()["subscriptionType"].toString();
+    return readJson().value("claudeAiOauth").toObject().value("subscriptionType").toString();
 }
 
 bool CredentialsReader::isExpired()
 {
-    qint64 expiresAt = readJson()["claudeAiOauth"]
-                           .toObject()["expiresAt"]
+    qint64 expiresAt = readJson().value("claudeAiOauth")
+                           .toObject().value("expiresAt")
                            .toVariant()
                            .toLongLong();
     return QDateTime::currentMSecsSinceEpoch() >= expiresAt;

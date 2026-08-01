@@ -168,6 +168,10 @@ UsagePopup::UsagePopup(QWidget *parent)
     m_statusLine = new QLabel("🔄 갱신 중...");
     m_statusLine->setStyleSheet("color: #666; font-size: 10px;");
 
+    m_recentModelLabel = new QLabel("");
+    m_recentModelLabel->setStyleSheet("color: #888; font-size: 10px; font-weight: bold;");
+    m_recentModelLabel->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+
     m_gearBtn = new QPushButton("⚙");
     m_gearBtn->setFixedSize(18, 18);
     m_gearBtn->setCheckable(true);
@@ -187,6 +191,8 @@ UsagePopup::UsagePopup(QWidget *parent)
 
     statusRow->addWidget(m_statusLine);
     statusRow->addStretch();
+    statusRow->addWidget(m_recentModelLabel);
+    statusRow->addSpacing(6);
     statusRow->addWidget(m_gearBtn);
     footerLayout->addLayout(statusRow);
 
@@ -387,6 +393,19 @@ void UsagePopup::applyDataInternal(const UsageData &data)
 {
     m_panel5h->setData(data.fiveHour);
     m_panel7d->setData(data.sevenDay);
+
+    // 최근 사용 모델명 출력 (claude- 제거 및 날짜 꼬리 제거하여 포맷팅)
+    QString friendlyName = data.recentModel;
+    if (friendlyName.startsWith("claude-")) {
+        friendlyName = friendlyName.mid(7);
+    }
+    QStringList parts = friendlyName.split('-');
+    if (parts.size() > 2 && parts.last().length() >= 8 && parts.last().toLongLong() > 0) {
+        parts.removeLast();
+        friendlyName = parts.join('-');
+    }
+    m_recentModelLabel->setText(friendlyName.isEmpty() ? "" : friendlyName);
+    m_recentModelLabel->setToolTip("최근 사용 모델: " + data.recentModel);
 
     const bool showExtra = data.extraUsage.enabled;
     const bool wasVisible = m_extraWidget->isVisible();

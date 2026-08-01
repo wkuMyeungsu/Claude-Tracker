@@ -9,11 +9,20 @@
 class QFileSystemWatcher;
 class QTimer;
 
+struct ModelPricing {
+    double inputRate = 0.0;
+    double outputRate = 0.0;
+    double cacheWriteRate = 0.0;
+    double cacheReadRate = 0.0;
+};
+
 class UsageScanner : public QObject
 {
     Q_OBJECT
 public:
     explicit UsageScanner(QObject *parent = nullptr);
+
+    static ModelPricing getPricingForModel(const QString &modelName);
 
     // API 성공 시 reset 시각 힌트 제공 (로컬 추정 resetsAt 에 사용)
     void setWindowHints(const QDateTime &reset5h, const QDateTime &reset7d);

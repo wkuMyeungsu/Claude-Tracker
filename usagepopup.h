@@ -55,6 +55,7 @@ private:
     QLabel      *m_extraPctLabel   = nullptr;
     ThresholdBar *m_extraBar        = nullptr;
     QLabel      *m_extraDetail     = nullptr;
+    QLabel      *m_recentModelLabel = nullptr;
     QLabel      *m_statusLine       = nullptr;
     QWidget     *m_titleBar         = nullptr;
     QWidget     *m_collapsingBody   = nullptr;

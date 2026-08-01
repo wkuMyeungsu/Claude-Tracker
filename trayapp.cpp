@@ -198,7 +198,18 @@ UsageData TrayApp::mergeWithLastApi(const UsageData &data) const
     merged.fiveHour = mergeQuota(m_lastApiData.fiveHour, data.fiveHour, UsageScanner::planLimit5h(), reset5hOccurred);
     merged.sevenDay = mergeQuota(m_lastApiData.sevenDay, data.sevenDay, UsageScanner::planLimit7d(), reset7dOccurred);
     merged.sevenDaySonnet = m_lastApiData.sevenDaySonnet;
-    merged.extraUsage = m_lastApiData.extraUsage;
+    merged.recentModel = data.recentModel.isEmpty() ? m_lastApiData.recentModel : data.recentModel;
+
+    if (m_lastApiData.extraUsage.enabled) {
+        merged.extraUsage.enabled = true;
+        merged.extraUsage.usedCredits = m_lastApiData.extraUsage.usedCredits + data.extraUsage.usedCredits;
+        merged.extraUsage.limitDollars = m_lastApiData.extraUsage.limitDollars;
+        if (merged.extraUsage.limitDollars > 0.0) {
+            merged.extraUsage.utilization = qMin(1.0, merged.extraUsage.usedCredits / merged.extraUsage.limitDollars);
+        }
+    } else {
+        merged.extraUsage = m_lastApiData.extraUsage;
+    }
 
     return merged;
 }
@@ -229,6 +240,10 @@ void TrayApp::updateTooltip()
                    .arg(m_current.extraUsage.usedCredits, 0, 'f', 2)
                    .arg(m_current.extraUsage.limitDollars, 0, 'f', 2)
                    .arg(qRound(m_current.extraUsage.utilization * 100.0));
+    }
+
+    if (!m_current.recentModel.isEmpty()) {
+        tip += QString("\n최근 모델: %1").arg(m_current.recentModel);
     }
 
     tip += "\n" + formatCountdown(m_current.fiveHour.resetsAt);
