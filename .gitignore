@@ -25,3 +25,8 @@ preprocess_err.txt
 
 # Claude Code internal
 .claude/
+
+# CPack Packaging Output
+_CPack_Packages/
+*.zip
+*.msi

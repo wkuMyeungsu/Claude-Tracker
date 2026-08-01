@@ -70,10 +70,11 @@ if(QT_VERSION_MAJOR EQUAL 6)
 endif()
 
 # CPack Packaging Configuration
-set(CPACK_PACKAGE_NAME "ClaudeTray")
+set(CPACK_PACKAGE_NAME "claude-tracker")
 set(CPACK_PACKAGE_VENDOR "wkuMyeungsu")
 set(CPACK_PACKAGE_VERSION "1.1.0")
 set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "Claude Code Usage Monitor Tray Application")
 set(CPACK_PACKAGE_INSTALL_DIRECTORY "ClaudeTray")
-set(CPACK_GENERATOR "WIX;NSIS")
+set(CPACK_GENERATOR "WIX;NSIS;ZIP")
+set(CPACK_PACKAGE_BINARY_DIR "${CMAKE_BINARY_DIR}")
 include(CPack)
