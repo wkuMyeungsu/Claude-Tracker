@@ -30,3 +30,7 @@ preprocess_err.txt
 _CPack_Packages/
 *.zip
 *.msi
+
+# Python (tools/gen_icon.py)
+__pycache__/
+*.pyc
