@@ -17,15 +17,15 @@
 
 namespace {
 const QMap<QString, qint64> PLAN_LIMITS_5H = {
-    {"pro", 18'000'000LL},
-    {"max_5x", 90'000'000LL},
-    {"max_20x", 360'000'000LL},
+    {"pro", 7'500'000LL},
+    {"max_5x", 37'500'000LL},
+    {"max_20x", 150'000'000LL},
 };
 
 const QMap<QString, qint64> PLAN_LIMITS_7D = {
-    {"pro", 144'000'000LL},
-    {"max_5x", 720'000'000LL},
-    {"max_20x", 2'880'000'000LL},
+    {"pro", 150'000'000LL},
+    {"max_5x", 750'000'000LL},
+    {"max_20x", 3'000'000'000LL},
 };
 
 static constexpr int DEBOUNCE_MS      = 300;   // 파일 변경 디바운스 간격 (0.3초)
@@ -239,7 +239,7 @@ UsageData UsageScanner::calcUsageForRange(const QDateTime &rangeStartUtc,
                 usage["input_tokens"].toVariant().toLongLong() +
                 usage["output_tokens"].toVariant().toLongLong() +
                 usage["cache_creation_input_tokens"].toVariant().toLongLong() +
-                usage["cache_read_input_tokens"].toVariant().toLongLong();
+                qRound64(usage["cache_read_input_tokens"].toVariant().toLongLong() * 0.1);
 
             records.append({ts.toUTC(), tokens});
         }
@@ -257,6 +257,16 @@ UsageData UsageScanner::calcUsageForRange(const QDateTime &rangeStartUtc,
     // (리셋 전 토큰을 delta에 포함하면 mergeWithLastApi에서 이중 계산됨)
     QDateTime window5hStart;
     QDateTime window7dStart;
+
+    // 마지막 리셋 시각이 이미 과거일 경우 주기를 더해 다음 리셋 시각 추정
+    auto estimateNext = [](const QDateTime &last, qint64 periodSecs,
+                           const QDateTime &now) -> QDateTime {
+        if (!last.isValid()) return {};
+        if (last.toUTC() > now) return last;
+        const qint64 elapsed = last.toUTC().secsTo(now);
+        return last.toUTC().addSecs((elapsed / periodSecs + 1) * periodSecs);
+    };
+
     if (deltaMode) {
         const bool r5InRange = reset5h.isValid()
             && reset5h.toUTC() > rangeStartUtc
@@ -267,15 +277,12 @@ UsageData UsageScanner::calcUsageForRange(const QDateTime &rangeStartUtc,
         window5hStart = r5InRange ? reset5h.toUTC() : rangeStartUtc;
         window7dStart = r7InRange ? reset7d.toUTC() : rangeStartUtc;
     } else {
-        // full 모드: 리셋이 최근 5h/7d 안에 발생했으면 리셋 시각을 윈도우 시작으로
-        const bool r5Recent = reset5h.isValid()
-            && reset5h.toUTC() <= now
-            && reset5h.toUTC() >= now.addSecs(-5LL * 3600);
-        const bool r7Recent = reset7d.isValid()
-            && reset7d.toUTC() <= now
-            && reset7d.toUTC() >= now.addDays(-7);
-        window5hStart = r5Recent ? reset5h.toUTC() : now.addSecs(-5LL * 3600);
-        window7dStart = r7Recent ? reset7d.toUTC() : now.addDays(-7);
+        // full 모드: 리셋 시각(resetsAt) 힌트가 있으면 해당 주기의 진짜 시작 시점을 계산
+        QDateTime nextReset5h = reset5h.isValid() ? estimateNext(reset5h, 5LL * 3600, now) : QDateTime();
+        QDateTime nextReset7d = reset7d.isValid() ? estimateNext(reset7d, 7LL * 24 * 3600, now) : QDateTime();
+
+        window5hStart = nextReset5h.isValid() ? nextReset5h.addSecs(-5LL * 3600) : now.addSecs(-5LL * 3600);
+        window7dStart = nextReset7d.isValid() ? nextReset7d.addDays(-7) : now.addDays(-7);
     }
 
     qint64 rolling5hTokens = 0;
@@ -302,15 +309,6 @@ UsageData UsageScanner::calcUsageForRange(const QDateTime &rangeStartUtc,
     UsageData data;
     data.fromApi  = false;
     data.fetchedAt = QDateTime::currentDateTime();
-
-    // 마지막 리셋 시각이 이미 과거일 경우 주기를 더해 다음 리셋 시각 추정
-    auto estimateNext = [](const QDateTime &last, qint64 periodSecs,
-                           const QDateTime &now) -> QDateTime {
-        if (!last.isValid()) return {};
-        if (last.toUTC() > now) return last;
-        const qint64 elapsed = last.toUTC().secsTo(now);
-        return last.toUTC().addSecs((elapsed / periodSecs + 1) * periodSecs);
-    };
 
     if (rolling5hTokens > 0 || limit5h > 0) {
         data.fiveHour.rawTokens   = rolling5hTokens;
