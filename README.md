@@ -2,8 +2,8 @@
 
 Windows 시스템 트레이에서 Claude Code의 사용량(quota)과 추가 결제 크레딧을 실시간으로 추적하는 Qt6 기반 모니터링 프로그램입니다.
 
-[![Download Windows](https://img.shields.io/badge/Download-Windows_v1.0.0-0078D6?style=for-the-badge&logo=windows&logoColor=white)](https://github.com/wkuMyeungsu/Claude-Tracker/releases/tag/v1.0.0)
-![badge](https://img.shields.io/badge/Qt-6.x-green) ![badge](https://img.shields.io/badge/platform-Windows-blue) ![badge](https://img.shields.io/badge/language-C%2B%2B17-orange)
+[![Download Windows](https://img.shields.io/badge/Download-Windows_v1.1.0-0078D6?style=for-the-badge&logo=windows&logoColor=white)](https://github.com/wkuMyeungsu/Claude-Tracker/releases/tag/v1.1.0)
+![badge](https://img.shields.io/badge/version-1.1.0-blue) ![badge](https://img.shields.io/badge/Qt-6.x-green) ![badge](https://img.shields.io/badge/platform-Windows-blue) ![badge](https://img.shields.io/badge/language-C%2B%2B17-orange)
 
 ---
 
@@ -49,9 +49,25 @@ Windows 시스템 트레이에서 Claude Code의 사용량(quota)과 추가 결�
 
 ---
 
+## 설치 (v1.1.0)
+
+[릴리즈 페이지](https://github.com/wkuMyeungsu/Claude-Tracker/releases/tag/v1.1.0)에서 받으세요.
+
+| 파일 | 용도 |
+| --- | --- |
+| `claude-tracker-1.1.0-win64.msi` | 설치 프로그램 (권장) |
+| `claude-tracker-1.1.0-win64.zip` | 무설치 휴대용. 압축 해제 후 `bin\ClaudeTray.exe` 실행 |
+
+**Qt를 따로 설치할 필요가 없습니다.** 실행에 필요한 Qt 런타임과 플러그인이 모두 포함되어 있습니다.
+
+> 트레이 아이콘이 보이지 않으면 작업 표시줄의 `^`(숨겨진 아이콘 표시)를 펼쳐 주세요.
+> Windows는 처음 실행하는 앱의 트레이 아이콘을 기본으로 숨김 영역에 넣습니다.
+
+---
+
 ## 실행 요구사항
 
-- Windows 10 / 11
+- Windows 10 / 11 (64비트)
 - Claude Code가 로컬에 설치되어 있고 로그인된 상태 (`~/.claude/.credentials.json` 자격 증명 파일 필요)
 
 ---
@@ -60,16 +76,44 @@ Windows 시스템 트레이에서 Claude Code의 사용량(quota)과 추가 결�
 
 소스 코드를 로컬에서 직접 컴파일하여 빌드하는 방법입니다.
 
-```bash
-# 빌드 디렉토리 구성
-cmake -B build -S .
+```powershell
+# Qt 키트를 PATH 앞에 둔다. 여러 Qt가 설치된 환경에서는
+# 이 설정 없이 빌드하면 의도하지 않은 Qt가 잡힐 수 있다.
+$env:PATH = "C:\Qt\6.11.0\mingw_64\bin;C:\Qt\Tools\mingw1310_64\bin;" +
+            "C:\Qt\Tools\Ninja;C:\Qt\Tools\CMake_64\bin;$env:PATH"
 
-# 프로젝트 컴파일
-cmake --build build --config Debug
+cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release `
+    -DCMAKE_PREFIX_PATH="C:/Qt/6.11.0/mingw_64" `
+    -DCMAKE_C_COMPILER="C:/Qt/Tools/mingw1310_64/bin/gcc.exe" `
+    -DCMAKE_CXX_COMPILER="C:/Qt/Tools/mingw1310_64/bin/g++.exe"
 
-# 실행
+cmake --build build
 ./build/ClaudeTray.exe
 ```
+
+### 배포 패키지 생성
+
+`cpack`은 windeployqt로 Qt 런타임을 모아 담고, MinGW·서드파티 DLL까지 함께 동봉합니다.
+MSI 생성에는 [WiX Toolset 3.x](https://github.com/wixtoolset/wix3/releases)가 필요합니다.
+
+```powershell
+cd build
+cpack          # claude-tracker-<버전>-win64.msi / .zip 생성
+```
+
+빌드 트리의 `ClaudeTray.exe`는 Qt DLL 없이 단독으로는 실행되지 않습니다.
+배포본 검증은 반드시 `cpack` 산출물로 하세요.
+
+### 아이콘 수정
+
+앱/트레이 아이콘은 두 곳에 같은 도형이 정의되어 있어 **함께** 고쳐야 합니다.
+
+```bash
+python tools/gen_icon.py    # appicon.ico 재생성 (pillow 필요)
+```
+
+- `tools/gen_icon.py` → `appicon.ico` (exe·시작 메뉴 아이콘)
+- `trayapp.cpp`의 `makeIcon()` → 트레이 아이콘 (사용량에 따라 채움량·색 변화)
 
 ---
 
@@ -83,6 +127,8 @@ cmake --build build --config Debug
 - `usagepopup.h/cpp`: 트레이 아이콘 클릭 시 발생하는 사용량 대시보드 창 UI
 - `quotapanel.h/cpp`: 사용량 게이지바와 임계 경고선 작업을 처리하는 위젯
 - `toggleswitch.h/cpp`: ON/OFF 스위치 컴포넌트
+- `appicon.ico` / `appicon.rc`: exe에 삽입되는 아이콘 리소스 (탐색기·시작 메뉴 표시용)
+- `tools/gen_icon.py`: `appicon.ico` 생성 스크립트
 
 ---
 
