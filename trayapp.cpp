@@ -261,79 +261,54 @@ void TrayApp::updateTooltip()
 
 QIcon TrayApp::makeIcon(double utilization)
 {
-    const int SZ = 44;
-    const double DPR = 2.0;
+    // tools/gen_icon.py 가 만드는 appicon.ico 와 동일한 도형이다.
+    // 한쪽 수치를 바꾸면 다른 쪽도 반드시 맞출 것.
+    constexpr double UNIT        = 64.0;   // 논리 좌표계 한 변
+    constexpr double TILE_RADIUS = 15.0;
+    constexpr double RING_INSET  = 12.0;
+    constexpr double RING_WIDTH  = 9.5;
+    constexpr int    SCALE       = 4;      // 논리 단위당 물리 픽셀
 
-    QPixmap px(SZ, SZ);
+    QPixmap px(int(UNIT) * SCALE, int(UNIT) * SCALE);
     px.fill(Qt::transparent);
-    px.setDevicePixelRatio(DPR);
+    // DPR 을 설정하면 이후 좌표는 논리 단위(0..64)로 다룰 수 있다.
+    px.setDevicePixelRatio(SCALE);
 
     QPainter p(&px);
     p.setRenderHint(QPainter::Antialiasing, true);
 
-    // ── 1. 배경 ───────────────────────────────────────
-    QColor bg(0xF4, 0x8A, 0x6A);
-    p.setBrush(bg);
+    // ── 타일 ──────────────────────────────────────────
     p.setPen(Qt::NoPen);
+    p.setBrush(QColor(0x26, 0x26, 0x2D));
+    p.drawRoundedRect(QRectF(0, 0, UNIT, UNIT), TILE_RADIUS, TILE_RADIUS);
 
-    QRectF rect(2.5, 2.5, 18.0, 18.0);
-    p.drawRoundedRect(rect, 5.2, 5.2);
+    const QRectF ringRect(RING_INSET, RING_INSET,
+                          UNIT - 2 * RING_INSET, UNIT - 2 * RING_INSET);
 
-    // ── 2. Claude 스타일 방사형 ───────────────────────
-    struct Spoke { double angle; double len; double alpha; };
+    // ── 빈 구간(트랙) ─────────────────────────────────
+    p.setBrush(Qt::NoBrush);
+    p.setPen(QPen(QColor(0x55, 0x55, 0x5A), RING_WIDTH));
+    p.drawEllipse(ringRect);
 
-    const Spoke spokes[] = {
-                            {   0.0, 6.8, 1.00 },
-                            {  50.0, 6.2, 0.92 },
-                            { 100.0, 5.2, 0.78 },
-                            { 150.0, 4.6, 0.62 },
-                            { 205.0, 5.4, 0.78 },
-                            { 255.0, 6.3, 0.92 },
-                            };
+    // ── 사용량 구간 ───────────────────────────────────
+    // 색은 quotapanel 과 동일한 팔레트를 쓴다.
+    const double v = qBound(0.0, utilization, 1.0);
+    if (v > 0.0) {
+        QColor c;
+        if (utilization < USAGE_WARN_PCT / 100.0)
+            c = QColor("#28a745");
+        else if (utilization < USAGE_CRIT_PCT / 100.0)
+            c = QColor("#ffc107");
+        else
+            c = QColor("#dc3545");
 
-    const double cx = 11.0;
-    const double cy = 11.0;
-
-    const double innerGap = 3.6;
-    const double strokeW = 2.2;
-
-    for (const auto &sp : spokes) {
-        double rad = qDegreesToRadians(sp.angle - 90.0);
-
-        double cos_ = std::cos(rad);
-        double sin_ = std::sin(rad);
-
-        double x1 = cx + cos_ * innerGap;
-        double y1 = cy + sin_ * innerGap;
-
-        double x2 = cx + cos_ * (innerGap + sp.len);
-        double y2 = cy + sin_ * (innerGap + sp.len);
-
-        QPen pen(QColor(255, 255, 255, int(sp.alpha * 255)),
-                 strokeW,
-                 Qt::SolidLine,
-                 Qt::RoundCap);
-
-        p.setPen(pen);
-        p.drawLine(QPointF(x1, y1), QPointF(x2, y2));
+        QPen arcPen(c, RING_WIDTH);
+        arcPen.setCapStyle(Qt::RoundCap);
+        p.setPen(arcPen);
+        // QPainter 각도 단위는 1/16도, 3시가 0도, 반시계가 양수.
+        // 12시(90도)에서 시계방향으로 진행하므로 span 은 음수다.
+        p.drawArc(ringRect, 90 * 16, -qRound(v * 360.0) * 16);
     }
-
-    // ── 3. 사용량 인디케이터 (개선 버전) ───────────────
-    QColor indColor;
-
-    if (utilization < USAGE_WARN_PCT / 100.0)
-        indColor = QColor(60, 180, 90);       // 기존보다 약간 부드럽게
-    else if (utilization < USAGE_CRIT_PCT / 100.0)
-        indColor = QColor(240, 190, 60);
-    else
-        indColor = QColor(220, 70, 70);
-
-    // 외곽선 제거 → 노이즈 감소
-    p.setPen(Qt::NoPen);
-    p.setBrush(indColor);
-
-    // 위치 살짝 바깥쪽으로 이동 + 크기 축소
-    p.drawEllipse(QPointF(18.2, 18.2), 2.2, 2.2);
 
     p.end();
     return QIcon(px);
