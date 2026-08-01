@@ -15,10 +15,18 @@ struct QuotaInfo {
     bool      valid = false;
 };
 
+struct ExtraUsageInfo {
+    bool   enabled = false;
+    double limitDollars = 0.0;
+    double usedCredits = 0.0;
+    double utilization = 0.0; // 0.0 ~ 1.0
+};
+
 struct UsageData {
     QuotaInfo fiveHour;
     QuotaInfo sevenDay;
     QuotaInfo sevenDaySonnet;
+    ExtraUsageInfo extraUsage;
     QDateTime fetchedAt;
     bool      fromApi = false;   // true=API 정확값, false=로컬 추정
 };

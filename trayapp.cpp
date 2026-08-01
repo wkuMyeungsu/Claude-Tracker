@@ -198,6 +198,7 @@ UsageData TrayApp::mergeWithLastApi(const UsageData &data) const
     merged.fiveHour = mergeQuota(m_lastApiData.fiveHour, data.fiveHour, UsageScanner::planLimit5h(), reset5hOccurred);
     merged.sevenDay = mergeQuota(m_lastApiData.sevenDay, data.sevenDay, UsageScanner::planLimit7d(), reset7dOccurred);
     merged.sevenDaySonnet = m_lastApiData.sevenDaySonnet;
+    merged.extraUsage = m_lastApiData.extraUsage;
 
     return merged;
 }
@@ -219,11 +220,19 @@ void TrayApp::updateTooltip()
         return quota.valid ? QString("%1%").arg(qRound(quota.utilization * 100.0)) : "--";
     };
 
-    m_tray->setToolTip(
-        QString("Claude Code Usage\n5h: %1  |  7d: %2\n%3")
-            .arg(pct(m_current.fiveHour))
-            .arg(pct(m_current.sevenDay))
-            .arg(formatCountdown(m_current.fiveHour.resetsAt)));
+    QString tip = QString("Claude Code Usage\n5h: %1  |  7d: %2")
+                      .arg(pct(m_current.fiveHour))
+                      .arg(pct(m_current.sevenDay));
+
+    if (m_current.extraUsage.enabled) {
+        tip += QString("\n추가 크레딧: $%1 / $%2 (%3%)")
+                   .arg(m_current.extraUsage.usedCredits, 0, 'f', 2)
+                   .arg(m_current.extraUsage.limitDollars, 0, 'f', 2)
+                   .arg(qRound(m_current.extraUsage.utilization * 100.0));
+    }
+
+    tip += "\n" + formatCountdown(m_current.fiveHour.resetsAt);
+    m_tray->setToolTip(tip);
 }
 
 QIcon TrayApp::makeIcon(double utilization)

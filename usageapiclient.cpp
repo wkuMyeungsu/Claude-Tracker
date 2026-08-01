@@ -1,5 +1,6 @@
 #include "usageapiclient.h"
 #include "credentialsreader.h"
+#include <cmath>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QNetworkAccessManager>
@@ -16,9 +17,7 @@ static constexpr int MAX_RETRIES            = 3;          // 이 횟수 초과 �
 
 static double normalizeUtilization(double utilization)
 {
-    if (utilization > 1.0)
-        return qBound(0.0, utilization / 100.0, 1.0);
-    return qBound(0.0, utilization, 1.0);
+    return qBound(0.0, utilization / 100.0, 1.0);
 }
 
 UsageApiClient::UsageApiClient(QObject *parent)
@@ -118,6 +117,17 @@ void UsageApiClient::onReplyFinished(QNetworkReply *reply)
     data.fiveHour = parseQuota(root["five_hour"].toObject());
     data.sevenDay = parseQuota(root["seven_day"].toObject());
     data.sevenDaySonnet = parseQuota(root["seven_day_sonnet"].toObject());
+
+    if (root.contains("extra_usage")) {
+        QJsonObject extraObj = root["extra_usage"].toObject();
+        data.extraUsage.enabled = extraObj["is_enabled"].toBool();
+        if (data.extraUsage.enabled) {
+            double divisor = std::pow(10.0, extraObj["decimal_places"].toInt(2));
+            data.extraUsage.limitDollars = extraObj["monthly_limit"].toDouble() / divisor;
+            data.extraUsage.usedCredits = extraObj["used_credits"].toDouble() / divisor;
+            data.extraUsage.utilization = qBound(0.0, extraObj["utilization"].toDouble() / 100.0, 1.0);
+        }
+    }
 
     emit usageFetched(data);
 }

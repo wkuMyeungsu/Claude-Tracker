@@ -120,6 +120,34 @@ UsagePopup::UsagePopup(QWidget *parent)
 
     m_sep1 = new QFrame; m_sep1->setFrameShape(QFrame::HLine); m_sep1->setStyleSheet("color: #444;");
     m_sep2 = new QFrame; m_sep2->setFrameShape(QFrame::HLine); m_sep2->setStyleSheet("color: #ddd;");
+    m_sepExtra = new QFrame; m_sepExtra->setFrameShape(QFrame::HLine); m_sepExtra->setStyleSheet("color: #ddd;");
+    m_sepExtra->setVisible(false);
+
+    m_extraWidget = new QWidget;
+    m_extraWidget->setFixedWidth(250);
+    m_extraWidget->setVisible(false);
+    auto *extraLayout = new QVBoxLayout(m_extraWidget);
+    extraLayout->setContentsMargins(14, 8, 14, 8);
+    extraLayout->setSpacing(4);
+
+    auto *extraRow = new QHBoxLayout;
+    m_extraTitleLabel = new QLabel("추가 결제 크레딧");
+    m_extraTitleLabel->setStyleSheet("font-weight: bold; font-size: 12px;");
+    m_extraPctLabel = new QLabel("--");
+    m_extraPctLabel->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+    m_extraPctLabel->setStyleSheet("font-weight: bold; font-size: 12px;");
+    extraRow->addWidget(m_extraTitleLabel);
+    extraRow->addWidget(m_extraPctLabel);
+
+    m_extraBar = new ThresholdBar;
+
+    m_extraDetail = new QLabel("--");
+    m_extraDetail->setStyleSheet("color: #888; font-size: 10px;");
+
+    extraLayout->addLayout(extraRow);
+    extraLayout->addWidget(m_extraBar);
+    extraLayout->addWidget(m_extraDetail);
+
     m_sep3 = new QFrame; m_sep3->setFrameShape(QFrame::HLine); m_sep3->setStyleSheet("color: #ddd;");
 
     // QSettings에서 autoFade 상태 복원
@@ -229,6 +257,8 @@ UsagePopup::UsagePopup(QWidget *parent)
     bodyLayout->addWidget(m_panel5h);
     bodyLayout->addWidget(m_sep2);
     bodyLayout->addWidget(m_panel7d);
+    bodyLayout->addWidget(m_sepExtra);
+    bodyLayout->addWidget(m_extraWidget);
     bodyLayout->addWidget(m_sep3);
     bodyLayout->addWidget(m_footer);
     bodyLayout->addWidget(m_settingsPanel);
@@ -357,6 +387,31 @@ void UsagePopup::applyDataInternal(const UsageData &data)
 {
     m_panel5h->setData(data.fiveHour);
     m_panel7d->setData(data.sevenDay);
+
+    const bool showExtra = data.extraUsage.enabled;
+    const bool wasVisible = m_extraWidget->isVisible();
+
+    m_sepExtra->setVisible(showExtra);
+    m_extraWidget->setVisible(showExtra);
+
+    if (showExtra) {
+        int pct = qRound(data.extraUsage.utilization * 100.0);
+        pct = qBound(0, pct, 100);
+
+        m_extraPctLabel->setText(QString("%1%").arg(pct));
+        m_extraBar->setValue(pct);
+        m_extraBar->setActive(!m_idleMode);
+
+        m_extraDetail->setText(QString("$%1 / $%2")
+                               .arg(data.extraUsage.usedCredits, 0, 'f', 2)
+                               .arg(data.extraUsage.limitDollars, 0, 'f', 2));
+    }
+
+    if (showExtra != wasVisible) {
+        m_collapsingBody->layout()->invalidate();
+        m_collapsingBody->adjustSize();
+        adjustSize();
+    }
 }
 
 void UsagePopup::applyCountdownsInternal(const QString &c5h, const QString &c7d)
@@ -430,6 +485,7 @@ void UsagePopup::setActive()
 
     m_panel5h->setActive(true);
     m_panel7d->setActive(true);
+    m_extraBar->setActive(true);
 
     if (windowOpacity() >= 1.0 && m_opacityAnim->endValue().toDouble() >= 1.0)
         return;
@@ -443,6 +499,7 @@ void UsagePopup::setIdle()
 
     m_panel5h->setActive(false);
     m_panel7d->setActive(false);
+    m_extraBar->setActive(false);
 
     m_fadeTimer->start();  // 10s 후 투명화 (이미 대기 중이면 재시작)
 }

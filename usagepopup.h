@@ -11,6 +11,7 @@ class QLabel;
 class QPropertyAnimation;
 class QGraphicsOpacityEffect;
 class QuotaPanel;
+class ThresholdBar;
 class QWidget;
 class QPushButton;
 class QTimer;
@@ -48,6 +49,12 @@ private:
 
     QuotaPanel  *m_panel5h          = nullptr;
     QuotaPanel  *m_panel7d          = nullptr;
+    QFrame      *m_sepExtra        = nullptr;
+    QWidget     *m_extraWidget     = nullptr;
+    QLabel      *m_extraTitleLabel = nullptr;
+    QLabel      *m_extraPctLabel   = nullptr;
+    ThresholdBar *m_extraBar        = nullptr;
+    QLabel      *m_extraDetail     = nullptr;
     QLabel      *m_statusLine       = nullptr;
     QWidget     *m_titleBar         = nullptr;
     QWidget     *m_collapsingBody   = nullptr;
