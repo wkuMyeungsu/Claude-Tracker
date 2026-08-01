@@ -15,11 +15,13 @@ public:
     explicit UsageApiClient(QObject *parent = nullptr);
     QDateTime nextScheduledFetchAt() const;
     static int pollIntervalMs();
+    void checkForUpdates();
 
 signals:
     void fetchStarted();
     void usageFetched(UsageData data);
     void fetchFailed(QString reason, bool networkError);
+    void updateAvailable(const QString &latestVersion, const QString &downloadUrl);
 
 public slots:
     void fetchUsage();

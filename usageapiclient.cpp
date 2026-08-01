@@ -131,3 +131,54 @@ void UsageApiClient::onReplyFinished(QNetworkReply *reply)
 
     emit usageFetched(data);
 }
+
+void UsageApiClient::checkForUpdates()
+{
+    QUrl url("https://api.github.com/repos/wkuMyeungsu/Claude-Tracker/releases/latest");
+    QNetworkRequest request(url);
+    request.setHeader(QNetworkRequest::UserAgentHeader, "ClaudeTray-UpdateChecker/1.1");
+
+    QNetworkReply *reply = m_nam->get(request);
+    connect(reply, &QNetworkReply::finished, this, [this, reply]() {
+        reply->deleteLater();
+        if (reply->error() != QNetworkReply::NoError)
+            return;
+
+        QJsonObject root = QJsonDocument::fromJson(reply->readAll()).object();
+        QString latestTag = root["tag_name"].toString();
+        if (latestTag.isEmpty())
+            return;
+
+        QString cleanTag = latestTag;
+        if (cleanTag.startsWith("v", Qt::CaseInsensitive)) {
+            cleanTag = cleanTag.mid(1);
+        }
+
+        auto parseVer = [](const QString &v) -> QVector<int> {
+            QVector<int> parts;
+            for (const QString &p : v.split('.')) {
+                parts.append(p.toInt());
+            }
+            while (parts.size() < 3) parts.append(0);
+            return parts;
+        };
+
+        QVector<int> currentVer = parseVer("1.1.0");
+        QVector<int> remoteVer = parseVer(cleanTag);
+
+        bool hasUpdate = false;
+        for (int i = 0; i < 3; ++i) {
+            if (remoteVer[i] > currentVer[i]) {
+                hasUpdate = true;
+                break;
+            } else if (remoteVer[i] < currentVer[i]) {
+                break;
+            }
+        }
+
+        if (hasUpdate) {
+            QString downloadUrl = root["html_url"].toString();
+            emit updateAvailable(latestTag, downloadUrl);
+        }
+    });
+}

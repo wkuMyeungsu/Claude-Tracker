@@ -10,6 +10,8 @@
 #include <QPixmap>
 #include <QSettings>
 #include <QTimer>
+#include <QDesktopServices>
+#include <QUrl>
 
 TrayApp::TrayApp(QObject *parent)
     : QObject(parent)
@@ -57,6 +59,13 @@ TrayApp::TrayApp(QObject *parent)
     connect(m_countdownTimer, &QTimer::timeout,
             this, &TrayApp::updateCountdowns);
     m_countdownTimer->start(60 * 1000);
+
+    connect(m_apiClient, &UsageApiClient::updateAvailable,
+            this, &TrayApp::onUpdateAvailable);
+    connect(m_tray, &QSystemTrayIcon::messageClicked,
+            this, &TrayApp::onUpdateNotificationClicked);
+
+    m_apiClient->checkForUpdates();
 }
 
 void TrayApp::onTrayActivated(QSystemTrayIcon::ActivationReason reason)
@@ -360,5 +369,23 @@ void TrayApp::onActivityDetected()
 {
     m_isActive = true;
     m_popup->setActive();
+}
+
+void TrayApp::onUpdateAvailable(const QString &latestVersion, const QString &downloadUrl)
+{
+    m_updateUrl = downloadUrl;
+    m_tray->showMessage(
+        "ClaudeTray 업데이트 가능",
+        QString("새로운 버전 %1이 출시되었습니다. 클릭하여 다운로드 페이지로 이동합니다.").arg(latestVersion),
+        QSystemTrayIcon::Information,
+        10000
+    );
+}
+
+void TrayApp::onUpdateNotificationClicked()
+{
+    if (!m_updateUrl.isEmpty()) {
+        QDesktopServices::openUrl(QUrl(m_updateUrl));
+    }
 }
 

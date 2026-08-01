@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.5)
 
-project(ClaudeTray VERSION 1.0 LANGUAGES CXX)
+project(ClaudeTray VERSION 1.1.0 LANGUAGES CXX)
 
 set(CMAKE_AUTOUIC ON)
 set(CMAKE_AUTOMOC ON)
@@ -68,3 +68,12 @@ install(TARGETS ClaudeTray
 if(QT_VERSION_MAJOR EQUAL 6)
     qt_finalize_executable(ClaudeTray)
 endif()
+
+# CPack Packaging Configuration
+set(CPACK_PACKAGE_NAME "ClaudeTray")
+set(CPACK_PACKAGE_VENDOR "wkuMyeungsu")
+set(CPACK_PACKAGE_VERSION "1.1.0")
+set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "Claude Code Usage Monitor Tray Application")
+set(CPACK_PACKAGE_INSTALL_DIRECTORY "ClaudeTray")
+set(CPACK_GENERATOR "WIX;NSIS")
+include(CPack)

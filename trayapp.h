@@ -24,6 +24,8 @@ private slots:
     void updateCountdowns();
     void onTrayActivated(QSystemTrayIcon::ActivationReason reason);
     void onActivityDetected();
+    void onUpdateAvailable(const QString &latestVersion, const QString &downloadUrl);
+    void onUpdateNotificationClicked();
 
 private:
     void applyData(const UsageData &data);
@@ -45,6 +47,7 @@ private:
     bool m_apiFailed      = false;
     bool m_hasLastApiData = false;
     bool m_isActive       = false;  // 토큰 사용 중 여부
+    QString m_updateUrl;
 };
 
 #endif // TRAYAPP_H
