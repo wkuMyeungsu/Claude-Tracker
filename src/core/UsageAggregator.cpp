@@ -22,7 +22,7 @@ const QMap<QString, qint64> PLAN_LIMITS_7D = {
 QDateTime billingCycleStart(const QDateTime &nowUtc)
 {
     return QDateTime(QDate(nowUtc.date().year(), nowUtc.date().month(), 1),
-                     QTime(0, 0), QTimeZone::UTC);
+                     QTime(0, 0), QTimeZone::utc());
 }
 
 } // namespace

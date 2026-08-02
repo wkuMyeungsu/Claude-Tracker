@@ -24,7 +24,7 @@ constexpr qint64 SECS_7D = 7LL * 24 * 3600;
 QDateTime utc(const QString &iso)
 {
     QDateTime dt = QDateTime::fromString(iso, Qt::ISODate);
-    dt.setTimeZone(QTimeZone::UTC);
+    dt.setTimeZone(QTimeZone::utc());
     return dt;
 }
 
