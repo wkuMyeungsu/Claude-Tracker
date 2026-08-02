@@ -42,6 +42,10 @@ struct UsageFeatures {
 struct QuotaCoefficients {
     double c[Calib::FamilyCount][Calib::KindCount] = {};
     int    samples = 0;      // 학습에 반영된 관측 수 (신뢰도 표시용)
+    // 계수가 연속으로 천장에 붙은 관측 수. 한 번은 지나가는 외란이지만
+    // 계속 붙어 있다는 건 선형 모델이 데이터를 설명하지 못한다는 뜻이라
+    // 학습분을 버리고 prior 로 되돌린다 (자가 복구).
+    int    saturatedStreak = 0;
 
     double predict(const UsageFeatures &f) const;
     bool   isValid() const;  // 계수가 하나라도 양수인가
@@ -63,15 +67,20 @@ CalibrationSet    priorsFor(qint64 limit5h, qint64 limit7d);
 
 // 관측 1건으로 계수를 갱신한다 (정규화 LMS).
 //   observedUtil : API 가 알려준 그 윈도우의 실제 utilization
-//   prior        : 계수 상·하한을 잡기 위한 기준값
-// 학습에 반영했으면 true. 신호가 없는 관측(빈 특징벡터, 포화된 100%,
+//   prior        : 계수 상·하한과 자가 복구의 기준값
+//   residualOut  : 갱신 '전' 잔차 (observedUtil - predict). 양수면 로컬 로그로
+//                  설명되지 않는 사용량 — claude.ai 등 외부 표면 사용의 추정치다.
+// 상태를 바꿨으면 true (저장 필요). 신호가 없는 관측(빈 특징벡터, 포화된 100%,
 // 0% 등)은 건드리지 않고 false 를 돌려준다.
 bool observe(QuotaCoefficients &coeff, const UsageFeatures &features,
-             double observedUtil, const QuotaCoefficients &prior);
+             double observedUtil, const QuotaCoefficients &prior,
+             double *residualOut = nullptr);
 
 // QSettings 영속화 (키 접두사별로 저장).
 void saveTo(const QString &group, const CalibrationSet &set);
-bool loadFrom(const QString &group, CalibrationSet &set);
+// priors 를 함께 받아 불러온 값을 검증한다. 플랜이 바뀌어 한도가 달라졌거나
+// 저장분이 손상됐으면 그 창은 prior 로 되돌린다.
+bool loadFrom(const QString &group, CalibrationSet &set, const CalibrationSet &priors);
 
 } // namespace QuotaCalibrator
 

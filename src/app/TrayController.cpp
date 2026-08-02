@@ -30,8 +30,9 @@ TrayController::TrayController(QObject *parent)
     const QString plan = CredentialsReader::subscriptionType();
     m_calibPriors = QuotaCalibrator::priorsFor(UsageAggregator::planLimit5h(plan),
                                                UsageAggregator::planLimit7d(plan));
-    if (!QuotaCalibrator::loadFrom("calibration", m_calibration))
-        m_calibration = m_calibPriors;
+    // loadFrom 이 priors 를 기준으로 검증해, 현재 천장을 벗어난 창은 알아서
+    // 초기값으로 되돌린다(플랜 변경·구버전 과대 계수·손상 모두 여기서 걸린다).
+    QuotaCalibrator::loadFrom("calibration", m_calibration, m_calibPriors);
     m_scanner->setCalibration(m_calibration);
 
     m_contextMenu->addAction("종료", qApp, &QApplication::quit);
@@ -211,20 +212,23 @@ void TrayController::trainCalibration(const ScanResult &result)
     m_calibObservationPending = false;
 
     bool learned = false;
+    double residual5h = 0.0, residual7d = 0.0;
     auto tryObserve = [&](QuotaCoefficients &coeff, const UsageFeatures &features,
-                          const QuotaInfo &truth, const QuotaCoefficients &prior) {
+                          const QuotaInfo &truth, const QuotaCoefficients &prior,
+                          double *residualOut) {
         if (!truth.valid)
             return;
-        if (QuotaCalibrator::observe(coeff, features, truth.utilization, prior))
+        if (QuotaCalibrator::observe(coeff, features, truth.utilization, prior,
+                                     residualOut))
             learned = true;
     };
 
     tryObserve(m_calibration.fiveHour, result.full5hFeatures,
-               m_lastApiData.fiveHour, m_calibPriors.fiveHour);
+               m_lastApiData.fiveHour, m_calibPriors.fiveHour, &residual5h);
     tryObserve(m_calibration.sevenDay, result.full7dFeatures,
-               m_lastApiData.sevenDay, m_calibPriors.sevenDay);
+               m_lastApiData.sevenDay, m_calibPriors.sevenDay, &residual7d);
     tryObserve(m_calibration.sevenDaySonnet, result.full7dSonnetFeatures,
-               m_lastApiData.sevenDaySonnet, m_calibPriors.sevenDaySonnet);
+               m_lastApiData.sevenDaySonnet, m_calibPriors.sevenDaySonnet, nullptr);
 
     if (!learned)
         return;
@@ -232,9 +236,14 @@ void TrayController::trainCalibration(const ScanResult &result)
     m_scanner->setCalibration(m_calibration);
     QuotaCalibrator::saveTo("calibration", m_calibration);
 
-    qDebug() << "[TrayController] 보정 학습 samples 5h=" << m_calibration.fiveHour.samples
+    // 잔차(양수 = 로컬 로그로 설명되지 않는 사용량)를 남긴다. 이 값이 꾸준히
+    // 양수라면 claude.ai 등 외부 표면에서 할당량을 쓰고 있다는 뜻이고,
+    // 나중에 '외란 vs 실제 한도 변경' 판별 임계값을 정할 때의 근거가 된다.
+    qDebug() << "[TrayController] 보정 samples 5h=" << m_calibration.fiveHour.samples
              << "7d=" << m_calibration.sevenDay.samples
-             << "7dSonnet=" << m_calibration.sevenDaySonnet.samples;
+             << "7dSonnet=" << m_calibration.sevenDaySonnet.samples
+             << "| 잔차 5h=" << QString::number(residual5h * 100.0, 'f', 3) + "%p"
+             << "7d=" << QString::number(residual7d * 100.0, 'f', 3) + "%p";
 }
 
 void TrayController::updateCountdowns()

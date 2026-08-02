@@ -111,7 +111,10 @@ private slots:
     void calibrator_convergesTowardObservedUtilization();
     void calibrator_ignoresUnobservableSamples();
     void calibrator_learnsPerFamilyIndependently();
+    void calibrator_learnsDownFasterThanUp();
+    void calibrator_residualReportsUnexplainedUsage();
     void calibrator_clampsRunawayCoefficients();
+    void calibrator_selfHealsWhenPinnedAtCeiling();
 
     // ── UsageMerger ───────────────────────────────────────────────────────────
     void merge_addsDeltaOnTopOfApi();
@@ -576,12 +579,62 @@ void TestUsageLogic::calibrator_convergesTowardObservedUtilization()
 
     QCOMPARE(coeff.predict(f), 0.20);        // 학습 전에는 20% 로 과소 추정
 
-    for (int i = 0; i < 40; ++i)
+    // 상향(오염 가능) 방향이라 감속 학습이 걸려 예전보다 표본이 더 필요하다.
+    // 그래도 API 폴링 5분 주기 기준 반나절이면 수렴한다.
+    for (int i = 0; i < 150; ++i)
         QVERIFY(QuotaCalibrator::observe(coeff, f, truth, prior));
 
-    QCOMPARE(coeff.samples, 40);
+    QCOMPARE(coeff.samples, 150);
     QVERIFY2(qAbs(coeff.predict(f) - truth) < 0.005,
              qPrintable(QString("predict=%1").arg(coeff.predict(f))));
+}
+
+void TestUsageLogic::calibrator_learnsDownFasterThanUp()
+{
+    // 외부 표면(claude.ai 등) 사용은 API 사용률을 '올리기만' 한다. 따라서
+    // 과소 예측(error>0)은 계수 탓인지 외부 사용 탓인지 알 수 없지만,
+    // 과대 예측(error<0)은 계수가 확실히 큰 것이다. 후자만 전속으로 내린다.
+    const QuotaCoefficients prior = QuotaCalibrator::priorFor(1'000'000);
+
+    UsageFeatures f;
+    f.add(Calib::Opus, Calib::Input, 200'000);
+    const double base = prior.predict(f);          // 0.20
+
+    // 같은 크기의 오차를 위/아래로 한 번씩 준다.
+    QuotaCoefficients up = prior;
+    QuotaCalibrator::observe(up, f, base + 0.05, prior);
+    const double movedUp = up.predict(f) - base;
+
+    QuotaCoefficients down = prior;
+    QuotaCalibrator::observe(down, f, base - 0.05, prior);
+    const double movedDown = base - down.predict(f);
+
+    QVERIFY(movedUp > 0.0);
+    QVERIFY(movedDown > 0.0);
+    // 내려가는 쪽이 확실히 빨라야 한다 (설계상 4배)
+    QVERIFY2(movedDown > movedUp * 3.0,
+             qPrintable(QString("up=%1 down=%2").arg(movedUp).arg(movedDown)));
+}
+
+void TestUsageLogic::calibrator_residualReportsUnexplainedUsage()
+{
+    // 잔차는 갱신 '전' 오차다. 양수면 로컬 로그로 설명되지 않는 사용량이고,
+    // 이 값이 꾸준히 양수인지가 외부 표면 사용을 가려내는 근거가 된다.
+    const QuotaCoefficients prior = QuotaCalibrator::priorFor(1'000'000);
+    QuotaCoefficients coeff = prior;
+
+    UsageFeatures f;
+    f.add(Calib::Opus, Calib::Input, 100'000);     // prior 예측 = 0.10
+
+    double residual = 0.0;
+    QVERIFY(QuotaCalibrator::observe(coeff, f, 0.30, prior, &residual));
+    QVERIFY2(qAbs(residual - 0.20) < 1e-9,
+             qPrintable(QString("residual=%1").arg(residual)));
+
+    // 학습이 일어나지 않는 관측에서는 0 으로 초기화된다.
+    double none = 123.0;
+    QVERIFY(!QuotaCalibrator::observe(coeff, UsageFeatures(), 0.5, prior, &none));
+    QCOMPARE(none, 0.0);
 }
 
 void TestUsageLogic::calibrator_ignoresUnobservableSamples()
@@ -620,18 +673,50 @@ void TestUsageLogic::calibrator_learnsPerFamilyIndependently()
 void TestUsageLogic::calibrator_clampsRunawayCoefficients()
 {
     // 로컬 로그가 크게 유실된 상황(토큰은 조금인데 API 는 90%)에서도
-    // 계수가 무한정 커지면 안 된다.
+    // 계수가 무한정 커지면 안 된다. 천장은 prior 의 3배.
     const QuotaCoefficients prior = QuotaCalibrator::priorFor(1'000'000);
     QuotaCoefficients coeff = prior;
 
     UsageFeatures tiny;
     tiny.add(Calib::Opus, Calib::Input, 1'000);
-    for (int i = 0; i < 500; ++i)
+    // 자가 복구가 걸리면 5회마다 되돌아가므로 여러 주기를 도는 정도면 충분하다.
+    for (int i = 0; i < 40; ++i) {
         QuotaCalibrator::observe(coeff, tiny, 0.90, prior);
+        QVERIFY2(coeff.c[Calib::Opus][Calib::Input]
+                     <= prior.c[Calib::Opus][Calib::Input] * 3.0 + 1e-12,
+                 "천장을 넘은 순간이 한 번이라도 있으면 안 된다");
+        QVERIFY(coeff.c[Calib::Opus][Calib::Input] >= 0.0);
+    }
+}
 
-    QVERIFY(coeff.c[Calib::Opus][Calib::Input]
-            <= prior.c[Calib::Opus][Calib::Input] * 20.0 + 1e-12);
-    QVERIFY(coeff.c[Calib::Opus][Calib::Input] >= 0.0);
+void TestUsageLogic::calibrator_selfHealsWhenPinnedAtCeiling()
+{
+    // 천장에 계속 눌려 있다 = 선형 모델이 관측을 설명하지 못한다.
+    // 그 상태의 계수는 prior 보다 나을 게 없으므로 스스로 학습분을 버려야 한다.
+    // (사용자에게 '초기화' 버튼을 맡기지 않는다 — 시스템이 알아서 낫는다)
+    const QuotaCoefficients prior = QuotaCalibrator::priorFor(1'000'000);
+    QuotaCoefficients coeff = prior;
+
+    UsageFeatures tiny;
+    tiny.add(Calib::Opus, Calib::Input, 1'000);   // 설명 불가능한 관측
+
+    // 천장에 붙기 시작하고, 연속 5회가 되면 되돌아간다.
+    bool sawReset = false;
+    for (int i = 0; i < 60; ++i) {
+        QuotaCalibrator::observe(coeff, tiny, 0.90, prior);
+        if (coeff.samples == 0) { sawReset = true; break; }
+    }
+    QVERIFY2(sawReset, "천장에 계속 눌려 있는데도 초기화되지 않았다");
+    QCOMPARE(coeff.c[Calib::Opus][Calib::Input], prior.c[Calib::Opus][Calib::Input]);
+    QCOMPARE(coeff.saturatedStreak, 0);
+
+    // 정상 범위 관측에서는 초기화가 일어나면 안 된다.
+    QuotaCoefficients healthy = prior;
+    UsageFeatures f;
+    f.add(Calib::Opus, Calib::Input, 200'000);
+    for (int i = 0; i < 60; ++i)
+        QuotaCalibrator::observe(healthy, f, 0.22, prior);   // prior 예측 0.20
+    QCOMPARE(healthy.samples, 60);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

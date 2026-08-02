@@ -13,10 +13,32 @@ namespace {
 // API 폴링이 5분 주기이므로 하루면 충분히 안정된다.
 constexpr double LEARNING_RATE = 0.25;
 
-// 계수 상한: prior 의 이 배수. 로그가 일부 유실된 사용자(다른 PC 에서도
-// Claude Code 를 쓰는 경우)는 계수가 위로 밀리는데, 그게 그 사용자에게는
-// 오히려 맞는 보정이다. 다만 폭주는 막아야 하므로 천장을 둔다.
-constexpr double MAX_COEFF_RATIO = 20.0;
+// 오차가 '양수'일 때만 곱하는 감속 계수.
+//
+// 구독 할당량은 claude.ai 웹·데스크톱·모바일과 공유되는데 로컬 JSONL 에는
+// Claude Code 사용분만 남는다. 즉 우리가 못 보는 사용량 ε ≥ 0 이 항상 존재하고,
+//
+//     observed = c_true·x + ε        (ε ≥ 0)
+//     error    = observed − c·x = (c_true − c)·x + ε
+//
+// error < 0 이면 ε ≥ 0 이므로 반드시 c > c_true — 외부 사용으로는 절대 만들 수
+// 없는 '깨끗한' 증거라 전속으로 내린다.
+// error > 0 이면 c 가 작아서인지 ε 때문인지 구별할 수 없다. 이 방향으로 전속
+// 학습하면 웹을 조금만 써도 계수가 천장까지 밀려 올라간다(실제로 겪은 문제).
+constexpr double CONTAMINATED_RATE_FACTOR = 0.25;
+
+// 계수 상한: prior 의 이 배수.
+// 플랜 한도가 대충이라도 맞다면 참값이 prior 의 몇 배씩 될 수는 없다.
+// 예전 값 20 은 너무 헐거워서, 외부 사용이 섞이면 20배 과대 보고까지 허용했고
+// 한 번 밀려 올라간 계수가 정상 사용만으로는 사실상 내려오지 않았다.
+// 3 이면 로그가 절반쯤 누락되는 사용자(참값 ≈ 2×prior)도 수용하면서
+// 최악의 피해를 3배로 묶는다.
+constexpr double MAX_COEFF_RATIO = 3.0;
+
+// 천장에 연속으로 이만큼 붙어 있으면 학습분을 버리고 prior 로 되돌린다.
+// 천장에 눌려 있다는 건 선형 모델이 관측을 설명하지 못한다는 뜻이고,
+// 그 상태의 계수는 prior 보다 나을 게 없다. 사용자가 알 필요 없이 스스로 낫는다.
+constexpr int MAX_SATURATED_STREAK = 5;
 
 // 관측을 신뢰할 수 있는 utilization 구간.
 // 0 근처는 신호가 없고, 1.0 은 포화(클리핑)라 참값을 알 수 없다.
@@ -115,8 +137,12 @@ CalibrationSet priorsFor(qint64 limit5h, qint64 limit7d)
 }
 
 bool observe(QuotaCoefficients &coeff, const UsageFeatures &features,
-             double observedUtil, const QuotaCoefficients &prior)
+             double observedUtil, const QuotaCoefficients &prior,
+             double *residualOut)
 {
+    if (residualOut)
+        *residualOut = 0.0;
+
     if (observedUtil < MIN_OBSERVABLE_UTIL || observedUtil > MAX_OBSERVABLE_UTIL)
         return false;
     if (features.isEmpty())
@@ -135,24 +161,46 @@ bool observe(QuotaCoefficients &coeff, const UsageFeatures &features,
         return false;
 
     const double error = observedUtil - coeff.predict(features);
+    if (residualOut)
+        *residualOut = error;   // 양수 = 로컬 로그로 설명 안 되는 사용량(ε 추정)
 
+    // 오염된 방향(error > 0)만 감속한다. 위 상수 주석의 유도 참고.
+    const double rate = (error < 0.0) ? LEARNING_RATE
+                                      : LEARNING_RATE * CONTAMINATED_RATE_FACTOR;
+
+    bool hitCeiling = false;
     for (int f = 0; f < Calib::FamilyCount; ++f) {
         for (int k = 0; k < Calib::KindCount; ++k) {
             const double x = static_cast<double>(features.tokens[f][k]);
             if (x <= 0.0)
                 continue;   // 관측되지 않은 조합은 건드리지 않는다
-            coeff.c[f][k] += LEARNING_RATE * error * x / norm;
+            coeff.c[f][k] += rate * error * x / norm;
 
             // 음수 방지 + 폭주 방지. prior 가 0 인 축(한도 미상)은 천장을 두지 않는다.
             if (coeff.c[f][k] < 0.0)
                 coeff.c[f][k] = 0.0;
             const double ceiling = prior.c[f][k] * MAX_COEFF_RATIO;
-            if (ceiling > 0.0 && coeff.c[f][k] > ceiling)
+            if (ceiling > 0.0 && coeff.c[f][k] > ceiling) {
                 coeff.c[f][k] = ceiling;
+                hitCeiling = true;
+            }
         }
     }
 
     ++coeff.samples;
+
+    // 자가 복구: 천장에 계속 눌려 있으면 학습분을 버린다.
+    // 한 번은 지나가는 외란이지만, 연속이면 모델이 관측을 설명하지 못한다는
+    // 뜻이라 prior 가 오히려 낫다. 사용자 개입도 GUI 도 필요 없다.
+    coeff.saturatedStreak = hitCeiling ? coeff.saturatedStreak + 1 : 0;
+    if (coeff.saturatedStreak >= MAX_SATURATED_STREAK) {
+        const int seen = coeff.samples;
+        coeff = prior;                  // samples·streak 도 함께 0 으로
+        qWarning() << "[QuotaCalibrator] 계수가" << MAX_SATURATED_STREAK
+                   << "회 연속 천장에 도달 — 학습분" << seen
+                   << "건을 버리고 초기값으로 되돌림";
+    }
+
     return true;
 }
 
@@ -166,6 +214,7 @@ QJsonObject toJson(const QuotaCoefficients &q)
 {
     QJsonObject o;
     o["samples"] = q.samples;
+    o["saturated"] = q.saturatedStreak;
     for (int f = 0; f < Calib::FamilyCount; ++f) {
         QJsonArray row;
         for (int k = 0; k < Calib::KindCount; ++k)
@@ -175,11 +224,17 @@ QJsonObject toJson(const QuotaCoefficients &q)
     return o;
 }
 
-bool fromJson(const QJsonObject &o, QuotaCoefficients &q)
+// prior 를 함께 받아 검증한다. 저장분이 현재 천장을 넘으면 그 창은 통째로
+// 버린다 — 플랜이 바뀌어 한도가 달라졌거나, 천장을 조이기 전 버전이 남긴
+// 과대 계수이거나, 파일이 손상된 경우다. 어느 쪽이든 prior 가 낫다.
+bool fromJson(const QJsonObject &o, QuotaCoefficients &q,
+              const QuotaCoefficients &prior)
 {
     if (o.isEmpty())
         return false;
-    q.samples = o["samples"].toInt();
+    QuotaCoefficients loaded;
+    loaded.samples         = o["samples"].toInt();
+    loaded.saturatedStreak = o["saturated"].toInt();
     for (int f = 0; f < Calib::FamilyCount; ++f) {
         const QJsonArray row = o[FAMILY_KEYS[f]].toArray();
         if (row.size() != Calib::KindCount)
@@ -188,9 +243,13 @@ bool fromJson(const QJsonObject &o, QuotaCoefficients &q)
             const double v = row.at(k).toDouble(-1.0);
             if (v < 0.0)
                 return false;      // 손상된 값이면 통째로 버리고 prior 로 간다
-            q.c[f][k] = v;
+            const double ceiling = prior.c[f][k] * MAX_COEFF_RATIO;
+            if (ceiling > 0.0 && v > ceiling)
+                return false;      // 현재 기준으로 말이 안 되는 값
+            loaded.c[f][k] = v;
         }
     }
+    q = loaded;
     return true;
 }
 
@@ -208,25 +267,34 @@ void saveTo(const QString &group, const CalibrationSet &set)
                    QJsonDocument(root).toJson(QJsonDocument::Compact)));
 }
 
-bool loadFrom(const QString &group, CalibrationSet &set)
+bool loadFrom(const QString &group, CalibrationSet &set, const CalibrationSet &priors)
 {
+    set = priors;   // 어떤 창이든 검증에 실패하면 그 창은 prior 로 남는다
+
     QSettings s("ClaudeTray", "ClaudeTray");
     const QString blob = s.value(group).toString();
     if (blob.isEmpty())
         return false;
 
     const QJsonObject root = QJsonDocument::fromJson(blob.toUtf8()).object();
-    CalibrationSet loaded;
-    if (!fromJson(root["5h"].toObject(), loaded.fiveHour))
-        return false;
-    if (!fromJson(root["7d"].toObject(), loaded.sevenDay))
-        return false;
-    // 7d_sonnet 은 나중에 추가된 항목이라 없을 수 있다. 없으면 7d 로 시작한다.
-    if (!fromJson(root["7d_sonnet"].toObject(), loaded.sevenDaySonnet))
-        loaded.sevenDaySonnet = loaded.sevenDay;
 
-    set = loaded;
-    return true;
+    // 창마다 독립적으로 판단한다. 5h 가 망가졌다고 7d 학습분까지 버릴 이유가 없다.
+    int restored = 0;
+    if (fromJson(root["5h"].toObject(), set.fiveHour, priors.fiveHour))
+        ++restored;
+    if (fromJson(root["7d"].toObject(), set.sevenDay, priors.sevenDay))
+        ++restored;
+    // 7d_sonnet 은 나중에 추가된 항목이라 없을 수 있다. 없으면 7d 값으로 시작한다.
+    if (fromJson(root["7d_sonnet"].toObject(), set.sevenDaySonnet, priors.sevenDaySonnet))
+        ++restored;
+    else
+        set.sevenDaySonnet = set.sevenDay;
+
+    if (restored < 3) {
+        qWarning() << "[QuotaCalibrator] 저장된 보정값 일부가 현재 기준을 벗어나"
+                   << (3 - restored) << "개 창을 초기값으로 되돌림";
+    }
+    return restored > 0;
 }
 
 } // namespace QuotaCalibrator
