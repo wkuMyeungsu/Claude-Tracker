@@ -1,79 +1,81 @@
 # ClaudeTray
 
-Windows 시스템 트레이에서 Claude Code의 사용량(quota)과 추가 결제 크레딧을 실시간으로 추적하는 Qt6 기반 모니터링 프로그램입니다.
+Windows 시스템 트레이에서 Claude Code의 사용량(Quota)과 추가 결제 크레딧을 실시간으로 추적하는 Qt6 기반 모니터링 프로그램입니다.
 
 [![Download Windows](https://img.shields.io/badge/Download-Windows_v1.2.0-0078D6?style=for-the-badge&logo=windows&logoColor=white)](https://github.com/wkuMyeungsu/Claude-Tracker/releases/tag/v1.2.0)
 ![badge](https://img.shields.io/badge/version-1.2.0-blue) ![badge](https://img.shields.io/badge/Qt-6.x-green) ![badge](https://img.shields.io/badge/platform-Windows-blue) ![badge](https://img.shields.io/badge/language-C%2B%2B17-orange)
 
 ---
 
-## 주요 기능
-
-- **실시간 사용량 모니터링**: 5시간 및 7일 토큰 사용률을 실시간 게이지바로 시각화하고 초기화(리셋)까지 남은 시간을 카운트다운으로 보여줍니다.
-- **추가 결제 크레딧 추적**: 기본 제공량을 모두 소모한 후 사용하는 추가 결제용 크레딧($)의 남은 한도와 사용액을 블루 테마로 일관되게 표시합니다.
-- **오프라인 로컬 추적 및 자동 보정(LMS)**: API 응답 지연 시 로컬 대화 로그를 분석해 소모 비용을 실시간 계산하며, 정규화 LMS(Least Mean Squares) 알고리즘으로 모델별 토큰 차감 가중치를 자가 학습하여 추정의 정확도를 높입니다.
-- **실시간 훅(Hook) 상태 연동**: Claude Code의 훅 기능과 연동하여 현재 작업 상태(대기 중, 실행 중, 승인 대기 중)를 정확하게 감지하고 iOS 스타일의 원형 상태 표시등(🟢/🔵/🟡)으로 알려줍니다.
-- **스마트 UI/UX**: 군더더기 없는 텍스트 디자인과 동적 슬라이드 애니메이션 패널을 제공하며, 창을 항상 위에 고정해 두어도 활동이 없으면 자동으로 반투명하게 전환되어 방해되지 않습니다.
-- **직관적인 한도 경고**: 안전(초록), 경고(주황), 임계(빨강) 등 한도 상태에 맞춰 트레이 아이콘과 게이지바 색상이 즉각 변경됩니다.
-
----
-
-## 화면 구성 예시
+## 📸 대시보드 미리보기
 
 ![ClaudeTray UI Preview](resources/preview.png)
 
-- **타이틀바 상태 점(🟢/🔵/🟡)**: 🟢 대화 가능 / 🔵 툴 실행 중 / 🟡 승인 대기 중 (Claude Code 훅 연동 시 자동 감지).
-- **`[−]` (숨기기 버튼)**: 클릭 시 현재 창을 트레이로 숨깁니다.
-- **게이지바**: 사용률에 따라 초록(~70%) → 주황(71~85%) → 빨강(86%~)으로 색이 바뀝니다.
-  대화가 진행 중일 때는 채워진 영역 위로 빛이 흐르는 shimmer 애니메이션이 나타납니다.
-- **`⚙` (설정 버튼)**: 클릭 시 대시보드 화면이 부드럽게 설정 패널로 슬라이드 전환됩니다. 설정 패널에서 항상 위 고정(Pin), 투명도 조절, 뷰 모드 등을 설정할 수 있습니다.
-- **추가 결제 크레딧 패널**: 추가 결제가 활성화된 계정에서만 동적으로 표시되며, 초과 사용액과 한도를 달러($) 및 퍼센트로 정확히 보여줍니다.
+---
+
+## ✨ 주요 기능
+
+- **📊 실시간 사용량 추적**: 5시간 및 7일 토큰 사용률과 리셋 카운트다운을 게이지바로 시각화
+- **💳 추가 결제 크레딧 모니터링**: 초과 사용 시 결제 크레딧($)의 남은 한도 및 사용액을 블루 테마로 일관되게 표시
+- **⚡ 실시간 훅(Hook) 연동**: Claude Code의 작업 상태(🟢 대기 / 🔵 실행 중 / 🟡 승인 대기)를 원형 상태등으로 정확히 표시
+- **🔄 오프라인 로컬 추적 및 자가 학습(LMS)**: API 지연 시 로컬 대화 로그를 정규화 LMS 알고리즘으로 분석해 소모 비용 자동 보정
+- **🎨 스마트 UI/UX**: 동적 슬라이드 애니메이션 설정 패널, 항상 위 고정(Pin), 자동 투명도 전환 지원
 
 ---
 
-## 설치 (v1.2.0)
+## 🚀 설치 및 실행 (v1.2.0)
 
-[릴리즈 페이지](https://github.com/wkuMyeungsu/Claude-Tracker/releases/tag/v1.2.0)에서 받으세요.
+[릴리즈 페이지](https://github.com/wkuMyeungsu/Claude-Tracker/releases/tag/v1.2.0)에서 다운로드할 수 있습니다.
 
 | 파일 | 용도 |
 | --- | --- |
 | `claude-tracker-1.2.0-win64.msi` | 설치 프로그램 (권장) |
-| `claude-tracker-1.2.0-win64.zip` | 무설치 휴대용. 압축 해제 후 `bin\ClaudeTray.exe` 실행 |
+| `claude-tracker-1.2.0-win64.zip` | 무설치 휴대용 (압축 해제 후 `bin\ClaudeTray.exe` 실행) |
 
-**Qt를 따로 설치할 필요가 없습니다.** 실행에 필요한 Qt 런타임과 플러그인이 모두 포함되어 있습니다.
-
-> 트레이 아이콘이 보이지 않으면 작업 표시줄의 `^`(숨겨진 아이콘 표시)를 펼쳐 주세요.
-> Windows는 처음 실행하는 앱의 트레이 아이콘을 기본으로 숨김 영역에 넣습니다.
+> 💡 **Qt 별도 설치 불필요**: 실행에 필요한 Qt 런타임과 플러그인이 모듈화되어 동봉되어 있습니다.  
+> 💡 **요구사항**: Windows 10 / 11 (64비트), Claude Code 로그인 상태 (`~/.claude/.credentials.json`)
 
 ---
 
-## 실행 요구사항
+## 🔍 시나리오별 주요 화면
 
-- Windows 10 / 11 (64비트)
-- Claude Code가 로컬에 설치되어 있고 로그인된 상태 (`~/.claude/.credentials.json` 자격 증명 파일 필요)
+<details>
+<summary><b>1. 한도 경고 상태 (초록 / 주황 / 빨강) 보기</b></summary>
+
+- **~70% (안전)**: 초록색 🟢
+- **71%~85% (주의)**: 주황색 🟠
+- **86%~ (임계)**: 빨간색 🔴
+
+![한도 경고 화면](resources/preview_warning.png)
+
+</details>
+
+<details>
+<summary><b>2. 설정 슬라이드 패널 보기</b></summary>
+
+- `⚙` 설정 버튼 클릭 시 설정 패널로 부드럽게 슬라이드 전환됩니다.
+- 뷰 모드(컴팩트 / 전체), 창 투명도, 항상 위 고정(Pin), 게이지 물결 효과, 훅 승인 대기 감지 여부를 설정할 수 있습니다.
+
+![설정 패널 화면](resources/preview_settings.png)
+
+</details>
 
 ---
 
-## 빌드 방법
+<details>
+<summary>🛠️ <b>개발자 가이드 (빌드, 테스트 및 프로젝트 구조)</b></summary>
 
-소스 코드를 로컬에서 직접 컴파일하여 빌드하는 방법입니다.
-
-Qt 설치 경로는 PC마다 다르므로 `$QtRoot` 한 곳만 자기 환경에 맞게 바꾸면 됩니다.
-(Qt Creator에서 열어 빌드해도 동일합니다. 그때는 아래 과정이 필요 없습니다.)
+### 빌드 방법 (PowerShell)
 
 ```powershell
-# 자기 Qt 설치 경로로 바꿀 것. 버전/컴파일러 폴더명도 설치본에 맞춰 조정.
 $QtRoot  = "C:\Qt"
 $QtVer   = "6.11.1"
 $MinGW   = "mingw1310_64"
 
 $QtKit = "$QtRoot\$QtVer\mingw_64"
-# Qt 키트를 PATH 앞에 둔다. 여러 Qt가 설치된 환경에서는
-# 이 설정 없이 빌드하면 의도하지 않은 Qt가 잡힐 수 있다.
 $env:PATH = "$QtKit\bin;$QtRoot\Tools\$MinGW\bin;" +
             "$QtRoot\Tools\Ninja;$QtRoot\Tools\CMake_64\bin;$env:PATH"
 
-# CMake 인자에는 슬래시(/) 경로를 넘긴다. 역슬래시는 CMake가 이스케이프로 해석한다.
 $Kit = $QtKit.Replace('\','/'); $Tools = $QtRoot.Replace('\','/') + "/Tools/$MinGW/bin"
 
 cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release `
@@ -86,89 +88,29 @@ cmake --build build
 
 ### 테스트 실행
 
-시간·집계·병합 로직에는 단위 테스트가 있습니다. Qt Test 가 설치돼 있으면
-빌드에 자동으로 포함되고, 없으면 조용히 건너뜁니다.
-
 ```powershell
 cd build
 ctest --output-on-failure
 ```
 
-GUI·네트워크·자격 증명 없이 도는 순수 로직 테스트라 CI 에 그대로 넣을 수 있습니다.
-테스트를 빼고 빌드하려면 `-DCLAUDETRAY_BUILD_TESTS=OFF` 를 주세요.
-
 ### 배포 패키지 생성
-
-`cpack`은 windeployqt로 Qt 런타임을 모아 담고, MinGW·서드파티 DLL까지 함께 동봉합니다.
-MSI 생성에는 [WiX Toolset 3.x](https://github.com/wixtoolset/wix3/releases)가 필요합니다.
 
 ```powershell
 cd build
 cpack          # claude-tracker-<버전>-win64.msi / .zip 생성
 ```
 
-빌드 트리의 `ClaudeTray.exe`는 Qt DLL 없이 단독으로는 실행되지 않습니다.
-배포본 검증은 반드시 `cpack` 산출물로 하세요.
-
-### 아이콘 수정
-
-앱/트레이 아이콘은 두 곳에 같은 도형이 정의되어 있어 **함께** 고쳐야 합니다.
-
-```bash
-python tools/gen_icon.py    # resources/appicon.ico 재생성 (pillow 필요)
-```
-
-- `tools/gen_icon.py` → `resources/appicon.ico` (exe·시작 메뉴 아이콘)
-- `src/app/TrayController.cpp`의 `makeIcon()` → 트레이 아이콘 (사용량에 따라 채움량·색 변화)
-
----
-
-## 파일 구조
-
-책임에 따라 네 계층으로 나눠 두었습니다. **경로만 보고 UI인지 계산 로직인지
-알 수 있는 것**이 이 구성의 목적입니다.
+### 파일 구조
 
 ```
 src/
-  core/   순수 계산 — Qt Widgets·네트워크 비의존. 테스트가 링크하는 곳
-  data/   외부 입력 — 파일·네트워크·자격 증명
-  ui/     화면
-  app/    조립·흐름 제어
+  core/   순수 계산 — Qt Widgets·네트워크 비의존. 단위 테스트 링크 타깃
+  data/   외부 입력 — JSONL 대화 로그, API 클라이언트, 자격 증명, 훅 연동
+  ui/     화면 위젯 — 대시보드 창, 게이지바, 상태점, 토글 스위치
+  app/    조립 및 흐름 제어 — 트레이 컨트롤러
 ```
 
-### `src/core` — 순수 계산
-
-- `UsageTypes.h`: 계층 간에 오가는 자료형 (`QuotaInfo`, `UsageData`, `TokenRecord`, `ScanResult`)
-- `ModelPricing.h/cpp`: 모델별 요율표 조회와 레코드 1건의 비용 계산
-- `UsageAggregator.h/cpp`: 레코드를 5h/7d 윈도우로 갈라 사용률·비용을 내는 집계
-- `UsageMerger.h/cpp`: 마지막 API 정확값에 로컬 증분을 얹는 병합 로직
-- `QuotaCalibrator.h/cpp`: API 실제 사용률을 정답지 삼아 "토큰 1개당 할당량" 계수를 모델 계열별로 온라인 학습하는 보정기 (쓸수록 로컬 추정이 정확해짐)
-
-### `src/data` — 외부 입력
-
-- `CredentialsReader.h/cpp`: Claude Code의 로그인 정보를 읽어오는 역할
-- `HookBridge.h/cpp`: Claude Code 훅과 연동하여 승인 대기 및 실행 상태를 동기화
-- `UsageApiClient.h/cpp`: Claude API 서버와 통신하여 실시간 사용량을 조회하는 역할
-- `SessionLogReader.h/cpp`: JSONL 대화 로그를 읽어 `TokenRecord` 로 파싱
-- `SessionLogWatcher.h/cpp`: 로그 변경을 감시하다 백그라운드 스캔을 돌리는 역할 ('언제 셀지'만 담당하고, '무엇을 어떻게 셀지'는 core 에 있음)
-
-### `src/ui` — 화면
-
-- `UsageWindow.h/cpp`: 트레이 아이콘 클릭 시 뜨는 메인 대시보드 창 및 설정 슬라이드 패널
-- `QuotaGauge.h/cpp`: 사용량 게이지바와 임계 경고선을 그리는 위젯
-- `StatusDot.h/cpp`: iOS 스타일의 원형 상태 표시등 컴포넌트
-- `ToggleSwitch.h/cpp`: ON/OFF 스위치 컴포넌트
-
-### `src/app` — 조립
-
-- `TrayController.h/cpp`: 트레이 아이콘을 구성하고 프로그램 전체 흐름을 관리
-
-### 그 외
-
-- `resources/model_pricing.json`: Claude 모델별 단가 요율 (비용 계산용)
-- `resources/appicon.ico` / `appicon.rc`: exe에 삽입되는 아이콘 리소스
-- `tools/gen_icon.py`: `appicon.ico` 생성 스크립트
-- `tests/`: 시간 윈도우 집계·병합·요율 매칭 단위 테스트 (Qt Test)
+</details>
 
 ---
 
