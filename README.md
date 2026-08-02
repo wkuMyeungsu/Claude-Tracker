@@ -39,8 +39,7 @@ Windows 시스템 트레이에서 Claude Code의 사용량(Quota)과 추가 결�
 
 ## 상세 화면 및 설정
 
-<details>
-<summary><b>1. 한도 경고 상태 (초록 / 주황 / 빨강)</b></summary>
+### 1. 한도 경고 상태 (초록 / 주황 / 빨강)
 
 - **~70% (안전)**: 초록색
 - **71%~85% (주의)**: 주황색
@@ -48,22 +47,16 @@ Windows 시스템 트레이에서 Claude Code의 사용량(Quota)과 추가 결�
 
 ![한도 경고 화면](resources/preview_warning.png)
 
-</details>
-
-<details>
-<summary><b>2. 설정 슬라이드 패널</b></summary>
+### 2. 설정 슬라이드 패널
 
 - `⚙` 설정 버튼 클릭 시 설정 패널로 부드럽게 슬라이드 전환됩니다.
 - 뷰 모드(컴팩트 / 전체), 창 투명도, 항상 위 고정(Pin), 게이지 물결 효과, 훅 승인 대기 감지 여부를 설정할 수 있습니다.
 
 ![설정 패널 화면](resources/preview_settings.png)
 
-</details>
-
 ---
 
-<details>
-<summary><b>개발자 가이드 (빌드, 테스트 및 프로젝트 구조)</b></summary>
+## 개발자 가이드
 
 ### 빌드 방법 (PowerShell)
 
@@ -109,8 +102,6 @@ src/
   ui/     화면 위젯 — 대시보드 창, 게이지바, 상태점, 토글 스위치
   app/    조립 및 흐름 제어 — 트레이 컨트롤러
 ```
-
-</details>
 
 ---
 
