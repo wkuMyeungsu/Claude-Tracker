@@ -2,7 +2,7 @@
 # CMP0087(install(CODE) 안에서 제너레이터 표현식 평가)에 의존한다.
 cmake_minimum_required(VERSION 3.21)
 
-project(ClaudeTray VERSION 1.1.1 LANGUAGES CXX)
+project(ClaudeTray VERSION 1.1.2 LANGUAGES CXX)
 
 set(CMAKE_AUTOUIC ON)
 set(CMAKE_AUTOMOC ON)
