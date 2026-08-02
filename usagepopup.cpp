@@ -15,6 +15,8 @@
 #include <QSettings>
 #include <QTimer>
 #include <QVBoxLayout>
+#include <QStyleOption>
+#include <QPainter>
 
 
 UsagePopup::UsagePopup(QWidget *parent)
@@ -385,7 +387,16 @@ void UsagePopup::updateStatusLine()
         text = "🔴 연결 오류";
         break;
     }
-    m_statusLine->setText(text);
+    m_wasOpacityIdleBeforeDrag = false;
+}
+
+void UsagePopup::paintEvent(QPaintEvent *event)
+{
+    Q_UNUSED(event);
+    QStyleOption opt;
+    opt.initFrom(this);
+    QPainter p(this);
+    style()->drawPrimitive(QStyle::PE_Widget, &opt, &p, this);
 }
 
 void UsagePopup::animateOpacityTo(double target)

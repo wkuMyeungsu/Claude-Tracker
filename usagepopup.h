@@ -37,6 +37,7 @@ public:
 protected:
     bool eventFilter(QObject *obj, QEvent *event) override;
     void hideEvent(QHideEvent *event) override;
+    void paintEvent(QPaintEvent *event) override;
 
 private:
     void animateOpacityTo(double target);
