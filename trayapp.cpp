@@ -1,6 +1,7 @@
 
 #include "trayapp.h"
 #include "usageapiclient.h"
+#include "usagemerge.h"
 #include "usagepopup.h"
 #include "usagescanner.h"
 #include <QApplication>
@@ -43,7 +44,7 @@ TrayApp::TrayApp(QObject *parent)
             this, &TrayApp::onLocalUsage);
     connect(m_scanner, &UsageScanner::activityDetected,
             this, &TrayApp::onActivityDetected);
-    // activityStopped → 즉시 LED 페이드 시작 (30초 후 회색 되면 투명도 적용)
+    // activityStopped → 게이지바 shimmer 정지 + 10초 뒤 팝업 반투명화 예약
     connect(m_scanner, &UsageScanner::activityStopped, this, [this]() {
         m_isActive = false;
         m_popup->setIdle();
@@ -108,11 +109,10 @@ void TrayApp::onFetchFailed(QString reason, bool networkError)
     m_apiFailed = true;
     m_lastFetchError = reason;
 
-    const UsageData local = m_hasLastApiData
-        ? mergeWithLastApi(m_scanner->calcDeltaFromLocal(m_lastApiData.fetchedAt.toUTC()))
-        : m_scanner->calcFromLocal();
-    m_current = local;
-    applyData(local);
+    // 예전에는 여기서 로컬 스캔을 동기 호출했다. 전체 JSONL 을 메인 스레드에서
+    // 읽고 파싱하므로 네트워크가 끊긴 동안(30초 재시도 × N) UI 가 반복해서 멈췄다.
+    // 백그라운드 스캔을 요청하고, 결과는 onLocalUsage 가 같은 병합 규칙으로 받는다.
+    m_scanner->requestScan();
 
     const auto state = networkError
         ? UsagePopup::RefreshState::NetworkError
@@ -162,65 +162,10 @@ UsageData TrayApp::mergeWithLastApi(const UsageData &data) const
     if (!m_hasLastApiData)
         return data;
 
-    UsageData merged = m_lastApiData;
-    const QDateTime now = QDateTime::currentDateTimeUtc();
-
-    // API resetsAt 가 이미 과거(리셋 발생)이면 주기로 다음 리셋 시각 추정
-    auto estimateNext = [](const QDateTime &last, qint64 periodSecs) -> QDateTime {
-        if (!last.isValid()) return {};
-        const QDateTime now = QDateTime::currentDateTimeUtc();
-        if (last.toUTC() > now) return last;
-        const qint64 elapsed = last.toUTC().secsTo(now);
-        return last.toUTC().addSecs((elapsed / periodSecs + 1) * periodSecs);
-    };
-    merged.fiveHour.resetsAt  = estimateNext(m_lastApiData.fiveHour.resetsAt,  5LL * 3600);
-    merged.sevenDay.resetsAt  = estimateNext(m_lastApiData.sevenDay.resetsAt,  7LL * 24 * 3600);
-    merged.fromApi = false;
-    merged.fetchedAt = QDateTime::currentDateTime();
-
-    // 리셋이 발생한 경우 구 API 토큰을 0으로 처리 (리셋 후 신규 토큰만 집계)
-    const bool reset5hOccurred = m_lastApiData.fiveHour.resetsAt.isValid() &&
-                                  m_lastApiData.fiveHour.resetsAt.toUTC() <= now;
-    const bool reset7dOccurred = m_lastApiData.sevenDay.resetsAt.isValid() &&
-                                  m_lastApiData.sevenDay.resetsAt.toUTC() <= now;
-
-    auto mergeQuota = [](const QuotaInfo &apiQuota, const QuotaInfo &deltaQuota,
-                         qint64 limitTokens, bool resetOccurred) {
-        if (!apiQuota.valid)
-            return deltaQuota;
-
-        QuotaInfo mergedQuota = apiQuota;
-        if (limitTokens <= 0)
-            return mergedQuota;
-
-        // 리셋 발생 시 구 API 값 무시 → 리셋 후 델타만 반영
-        const qint64 apiTokens = resetOccurred
-            ? 0
-            : qRound64(apiQuota.utilization * static_cast<double>(limitTokens));
-        const qint64 deltaTokens = qMax<qint64>(0, deltaQuota.rawTokens);
-        mergedQuota.rawTokens = apiTokens + deltaTokens;
-        mergedQuota.limitTokens = limitTokens;
-        mergedQuota.utilization = qMin(1.0, static_cast<double>(mergedQuota.rawTokens) / static_cast<double>(limitTokens));
-        return mergedQuota;
-    };
-
-    merged.fiveHour = mergeQuota(m_lastApiData.fiveHour, data.fiveHour, UsageScanner::planLimit5h(), reset5hOccurred);
-    merged.sevenDay = mergeQuota(m_lastApiData.sevenDay, data.sevenDay, UsageScanner::planLimit7d(), reset7dOccurred);
-    merged.sevenDaySonnet = m_lastApiData.sevenDaySonnet;
-    merged.recentModel = data.recentModel.isEmpty() ? m_lastApiData.recentModel : data.recentModel;
-
-    if (m_lastApiData.extraUsage.enabled) {
-        merged.extraUsage.enabled = true;
-        merged.extraUsage.usedCredits = m_lastApiData.extraUsage.usedCredits + data.extraUsage.usedCredits;
-        merged.extraUsage.limitDollars = m_lastApiData.extraUsage.limitDollars;
-        if (merged.extraUsage.limitDollars > 0.0) {
-            merged.extraUsage.utilization = qMin(1.0, merged.extraUsage.usedCredits / merged.extraUsage.limitDollars);
-        }
-    } else {
-        merged.extraUsage = m_lastApiData.extraUsage;
-    }
-
-    return merged;
+    return UsageMerge::mergeWithLastApi(m_lastApiData, data,
+                                        UsageScanner::planLimit5h(),
+                                        UsageScanner::planLimit7d(),
+                                        QDateTime::currentDateTimeUtc());
 }
 
 void TrayApp::updateCountdowns()

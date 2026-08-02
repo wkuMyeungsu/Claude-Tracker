@@ -10,8 +10,10 @@
 struct QuotaInfo {
     double    utilization = 0.0;  // 0.0 ~ 1.0
     QDateTime resetsAt;
-    qint64    rawTokens  = 0;     // 실제 토큰 수 (표시용)
-    qint64    limitTokens = 0;    // 비교 기준 한도 (표시용)
+    // 아래 둘은 UsageMerge::mergeQuota 가 API 정확값에 로컬 델타를 더할 때 쓴다.
+    // (화면에는 utilization 만 나가고 토큰 수 자체는 표시하지 않는다.)
+    qint64    rawTokens  = 0;     // 가중 적용된 토큰 수
+    qint64    limitTokens = 0;    // 비교 기준 한도
     bool      valid = false;
 };
 
@@ -25,7 +27,6 @@ struct ExtraUsageInfo {
 struct UsageData {
     QuotaInfo fiveHour;
     QuotaInfo sevenDay;
-    QuotaInfo sevenDaySonnet;
     ExtraUsageInfo extraUsage;
     QString   recentModel;
     QDateTime fetchedAt;

@@ -23,6 +23,8 @@ set(PROJECT_SOURCES
     usageapiclient.cpp
     usagescanner.h
     usagescanner.cpp
+    usagemerge.h
+    usagemerge.cpp
     quotapanel.h
     quotapanel.cpp
     trayapp.h
@@ -57,6 +59,10 @@ else()
         add_executable(ClaudeTray ${PROJECT_SOURCES})
     endif()
 endif()
+
+# 업데이트 체크와 User-Agent 가 쓰는 현재 버전. 소스에 하드코딩하면
+# 버전을 올릴 때 자기 자신을 최신으로 오인해 알림이 뜨지 않는다.
+target_compile_definitions(ClaudeTray PRIVATE APP_VERSION="${PROJECT_VERSION}")
 
 target_link_libraries(ClaudeTray PRIVATE
     Qt${QT_VERSION_MAJOR}::Widgets      # QSystemTrayIcon, QMenu, QProgressBar
@@ -182,6 +188,20 @@ if(WIN32 AND MINGW)
             message(WARNING \"Unresolved runtime deps: \${_unresolved}\")
         endif()
     ")
+endif()
+
+# ── 단위 테스트 ───────────────────────────────────────────────────────────────
+# Qt Test 가 설치돼 있을 때만 켠다. 없으면 조용히 건너뛰므로 배포 빌드에는
+# 영향이 없다.  실행:  cd build && ctest --output-on-failure
+option(CLAUDETRAY_BUILD_TESTS "Build unit tests" ON)
+if(CLAUDETRAY_BUILD_TESTS AND QT_VERSION_MAJOR EQUAL 6)
+    find_package(Qt6 QUIET COMPONENTS Test)
+    if(Qt6Test_FOUND)
+        enable_testing()
+        add_subdirectory(tests)
+    else()
+        message(STATUS "Qt Test not found - skipping unit tests")
+    endif()
 endif()
 
 # CPack Packaging Configuration

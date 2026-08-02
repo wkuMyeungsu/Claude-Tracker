@@ -42,11 +42,9 @@ public:
 
     void setData(const QuotaInfo &info);
     void setCountdown(const QString &text);
-    void setCompact(bool compact);
     void setActive(bool active);
 
 private:
-    QLabel       *m_titleLabel;
     QLabel       *m_pctLabel;
     ThresholdBar *m_bar;
     QLabel       *m_resetLabel;

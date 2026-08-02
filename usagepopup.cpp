@@ -474,7 +474,7 @@ bool UsagePopup::eventFilter(QObject *obj, QEvent *event)
             m_dragPos                  = me->globalPosition().toPoint() - frameGeometry().topLeft();
             m_isDragging               = true;
             m_wasOpacityIdleBeforeDrag = m_opacityAtIdle;
-            animateOpacityTo(1.0);  // 투명도만 변경, LED 건드리지 않음
+            animateOpacityTo(1.0);  // 투명도만 변경, idle/active 상태는 건드리지 않음
             return true;
         }
     } else if (event->type() == QEvent::MouseMove) {
@@ -530,12 +530,6 @@ void UsagePopup::hideEvent(QHideEvent *event)
     QWidget::hideEvent(event);
 }
 
-void UsagePopup::toggleCompact()
-{
-    // TODO: 컴팩트 모드 미구현 — 직접 구현 예정
-    qDebug() << "[UsagePopup] toggleCompact() called — not yet implemented";
-}
-
 void UsagePopup::showNearTray(const QPoint &trayPos)
 {
     adjustSize();
@@ -567,7 +561,7 @@ void UsagePopup::showNearTray(const QPoint &trayPos)
     raise();
     activateWindow();
 
-    // 팝업이 닫혀 있는 사이에 LED가 이미 회색이 된 경우 → 핀 고정 시만 0.5초 후 투명 적용
+    // 팝업이 닫혀 있는 사이에 이미 idle 로 전환된 경우 → 핀 고정 시만 0.5초 후 투명 적용
     if (m_opacityAtIdle && m_pinBtn->isChecked() && m_autoFade)
         QTimer::singleShot(500, this, [this]() { if (isVisible() && m_pinBtn->isChecked() && m_autoFade) animateOpacityTo(0.6); });
 }

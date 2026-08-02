@@ -120,14 +120,14 @@ QuotaPanel::QuotaPanel(const QString &title, QWidget *parent)
 
     // 제목 + % 한 줄
     auto *row = new QHBoxLayout;
-    m_titleLabel = new QLabel(title);
-    m_titleLabel->setStyleSheet("font-weight: bold; font-size: 12px;");
+    auto *titleLabel = new QLabel(title);
+    titleLabel->setStyleSheet("font-weight: bold; font-size: 12px;");
 
     m_pctLabel = new QLabel("--");
     m_pctLabel->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
     m_pctLabel->setStyleSheet("font-weight: bold; font-size: 12px;");
 
-    row->addWidget(m_titleLabel);
+    row->addWidget(titleLabel);
     row->addWidget(m_pctLabel);
 
     m_bar = new ThresholdBar;
@@ -155,17 +155,8 @@ void QuotaPanel::setData(const QuotaInfo &info)
     m_pctLabel->setText(QString("%1%").arg(pct));
     m_bar->setValue(pct);
 
-    if (info.rawTokens > 0) {
-        auto fmt = [](qint64 n) -> QString {
-            if (n >= 1'000'000) return QString("%1M").arg(n / 1'000'000.0, 0, 'f', 1);
-            if (n >= 1'000)     return QString("%1K").arg(n / 1'000.0,     0, 'f', 1);
-            return QString::number(n);
-        };
-        QString detail = fmt(info.rawTokens);
-        if (info.limitTokens > 0)
-            detail += " / " + fmt(info.limitTokens);
-        m_resetLabel->setText(detail);
-    }
+    // m_resetLabel 은 여기서 건드리지 않는다. 호출측(TrayApp::applyData)이
+    // setData 직후 항상 setCountdown 으로 덮어쓰므로 여기서 쓴 값은 보이지 않는다.
 }
 
 void QuotaPanel::setCountdown(const QString &text)
@@ -178,16 +169,4 @@ void QuotaPanel::setActive(bool active)
     m_bar->setActive(active);
 }
 
-void QuotaPanel::setCompact(bool compact)
-{
-    m_titleLabel->setVisible(!compact);
-    m_pctLabel->setVisible(!compact);
-    m_resetLabel->setVisible(!compact);
-
-    auto *vbox = static_cast<QVBoxLayout *>(layout());
-    if (compact)
-        vbox->setContentsMargins(6, 3, 6, 3);
-    else
-        vbox->setContentsMargins(14, 8, 14, 8);
-}
 

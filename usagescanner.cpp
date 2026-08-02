@@ -14,7 +14,7 @@
 #include <QTimer>
 #include <QVector>
 #include <QtConcurrent>
-#include <algorithm>
+#include <iterator>
 
 namespace {
 const QMap<QString, qint64> PLAN_LIMITS_5H = {
@@ -29,18 +29,22 @@ const QMap<QString, qint64> PLAN_LIMITS_7D = {
     {"max_20x", 3'000'000'000LL},
 };
 
-static constexpr int DEBOUNCE_MS      = 300;   // 파일 변경 디바운스 간격 (0.3초)
-static constexpr int WATCHLIST_MS     = 5 * 60 * 1000;  // 감시 목록 갱신 간격
-}
+constexpr int DEBOUNCE_MS  = 300;             // 파일 변경 디바운스 간격 (0.3초)
+constexpr int WATCHLIST_MS = 5 * 60 * 1000;   // 감시 목록 갱신 간격
 
-struct TokenRecord {
-    QDateTime ts;
-    QString model;
-    qint64 input = 0;
-    qint64 output = 0;
-    qint64 cacheWrite = 0;
-    qint64 cacheRead = 0;
-};
+constexpr qint64 SECS_5H = 5LL * 3600;
+constexpr qint64 SECS_7D = 7LL * 24 * 3600;
+
+// 캐시 읽기는 신규 입력보다 훨씬 저렴하므로 할당량 집계에서 10% 로 가중한다.
+constexpr double CACHE_READ_WEIGHT = 0.1;
+
+// 추가 결제 크레딧은 월 단위로 누적되므로 이번 달 1일(UTC)이 기준점이다.
+QDateTime billingCycleStart(const QDateTime &nowUtc)
+{
+    return QDateTime(QDate(nowUtc.date().year(), nowUtc.date().month(), 1),
+                     QTime(0, 0), QTimeZone::UTC);
+}
+}
 
 UsageScanner::UsageScanner(QObject *parent)
     : QObject(parent)
@@ -52,22 +56,24 @@ UsageScanner::UsageScanner(QObject *parent)
     connect(m_watcher, &QFileSystemWatcher::fileChanged,
             this, &UsageScanner::onFileChanged);
 
-    // 디바운스: 2초 동안 추가 이벤트가 없을 때만 스캔 실행
+    // 디바운스: DEBOUNCE_MS 동안 추가 이벤트가 없을 때만 스캔 실행
     m_debounceTimer->setSingleShot(true);
     m_debounceTimer->setInterval(DEBOUNCE_MS);
-    connect(m_debounceTimer, &QTimer::timeout, this, &UsageScanner::doScan);
+    connect(m_debounceTimer, &QTimer::timeout, this, &UsageScanner::onDebounceTimeout);
 
     refreshWatchList();
 
     // 앱 시작 시 기존 JSONL 파일 즉시 스캔 (파일 변경 이벤트 없이도 초기값 표시)
-    QTimer::singleShot(200, this, &UsageScanner::doScan);
+    QTimer::singleShot(200, this, &UsageScanner::requestScan);
 
     // 5분마다 새 프로젝트 폴더 자동 감지 + 스캔 (QFileSystemWatcher 재귀 불가 우회,
     // Windows에서 watcher 이벤트 누락 시 폴백)
+    // 디바운스 타이머가 아니라 requestScan 을 직접 부른다. 디바운스를 거치면
+    // 파일 변경이 없었는데도 activityStopped 가 튀어 idle 로 잘못 전환된다.
     auto *watchTimer = new QTimer(this);
     connect(watchTimer, &QTimer::timeout, this, [this]() {
         refreshWatchList();
-        m_debounceTimer->start();
+        requestScan();
     });
     watchTimer->start(WATCHLIST_MS);
 }
@@ -91,7 +97,7 @@ void UsageScanner::onDirectoryChanged(const QString &)
 {
     refreshWatchList();
     emit activityDetected();    // 즉시 알림 (투명도 제어용)
-    m_debounceTimer->start();   // 타이머 리셋: 2초 후 스캔
+    m_debounceTimer->start();   // 타이머 리셋: DEBOUNCE_MS 후 스캔
 }
 
 void UsageScanner::onFileChanged(const QString &path)
@@ -100,7 +106,7 @@ void UsageScanner::onFileChanged(const QString &path)
     if (!path.isEmpty())
         m_watcher->addPath(path);
     emit activityDetected();    // 즉시 알림 (투명도 제어용)
-    m_debounceTimer->start();   // 타이머 리셋: 0.3초 후 스캔
+    m_debounceTimer->start();   // 타이머 리셋: DEBOUNCE_MS 후 스캔
 }
 
 void UsageScanner::refreshWatchList()
@@ -129,14 +135,19 @@ void UsageScanner::refreshWatchList()
 
 // ── 백그라운드 스캔 ───────────────────────────────────────────────────────────
 
-void UsageScanner::doScan()
+void UsageScanner::onDebounceTimeout()
 {
-    // 디바운스 만료 = 파일 변경이 2초간 없었음 → 즉시 idle 전환
+    // 디바운스 만료 = DEBOUNCE_MS 동안 파일 변경이 없었음 → 즉시 idle 전환
     emit activityStopped();
+    requestScan();
+}
 
+void UsageScanner::requestScan()
+{
     if (m_scanPending) {
-        // 이전 스캔이 아직 진행 중 → 완료 후 재시도
-        m_debounceTimer->start();
+        // 진행 중인 스캔이 끝난 직후 한 번 더 돌린다. 예전처럼 디바운스 타이머를
+        // 되감으면 그때마다 activityStopped 가 다시 나가는 부작용이 있었다.
+        m_rescanQueued = true;
         return;
     }
     m_scanPending = true;
@@ -145,29 +156,25 @@ void UsageScanner::doScan()
     const QDateTime hint5h     = m_lastKnownReset5h;
     const QDateTime hint7d     = m_lastKnownReset7d;
     const QDateTime deltaStart = m_deltaStart;
-    const bool      hasDelta   = deltaStart.isValid();
 
-    using ResultPair = QPair<UsageData, UsageData>;
-    auto *watcher = new QFutureWatcher<ResultPair>(this);
+    auto *watcher = new QFutureWatcher<ScanResult>(this);
 
-    connect(watcher, &QFutureWatcher<ResultPair>::finished,
-            this, [this, watcher, hasDelta]() {
+    connect(watcher, &QFutureWatcher<ScanResult>::finished, this, [this, watcher]() {
         m_scanPending = false;
-        const auto result = watcher->result();
-        emit localUsageUpdated(result.first, result.second, hasDelta);
+        const ScanResult result = watcher->result();
         watcher->deleteLater();
+
+        emit localUsageUpdated(result.full, result.delta, result.hasDelta);
+
+        if (m_rescanQueued) {
+            m_rescanQueued = false;
+            requestScan();
+        }
     });
 
-    QFuture<ResultPair> future =
-        QtConcurrent::run([hint5h, hint7d, deltaStart, hasDelta]() -> ResultPair {
-            UsageData full  = calcUsageForRange(QDateTime(), hint5h, hint7d);
-            UsageData delta = hasDelta
-                ? calcUsageForRange(deltaStart, hint5h, hint7d)
-                : full;
-            return {full, delta};
-        });
-
-    watcher->setFuture(future);
+    watcher->setFuture(QtConcurrent::run([hint5h, hint7d, deltaStart]() {
+        return scanLocal(deltaStart, hint5h, hint7d);
+    }));
 }
 
 // ── 플랜 한도 ────────────────────────────────────────────────────────────────
@@ -182,27 +189,148 @@ qint64 UsageScanner::planLimit7d()
     return PLAN_LIMITS_7D.value(CredentialsReader::subscriptionType(), 0);
 }
 
-// ── 메인 스레드 직접 호출용 (onFetchFailed 경로) ──────────────────────────────
+// ── 순수 계산 (파일 I/O 없음) ─────────────────────────────────────────────────
 
-UsageData UsageScanner::calcFromLocal() const
+QDateTime UsageScanner::estimateNextReset(const QDateTime &last, qint64 periodSecs,
+                                          const QDateTime &nowUtc)
 {
-    return calcUsageForRange(QDateTime(), m_lastKnownReset5h, m_lastKnownReset7d);
+    if (!last.isValid() || periodSecs <= 0)
+        return {};
+    const QDateTime lastUtc = last.toUTC();
+    if (lastUtc > nowUtc)
+        return lastUtc;
+    const qint64 elapsed = lastUtc.secsTo(nowUtc);
+    return lastUtc.addSecs((elapsed / periodSecs + 1) * periodSecs);
 }
 
-UsageData UsageScanner::calcDeltaFromLocal(const QDateTime &sinceUtc) const
+QDateTime UsageScanner::earliestRelevant(const QDateTime &nowUtc,
+                                         const QDateTime &deltaStartUtc,
+                                         const QDateTime &reset7d)
 {
-    return calcUsageForRange(sinceUtc.toUTC(), m_lastKnownReset5h, m_lastKnownReset7d);
+    const QDateTime next7d = estimateNextReset(reset7d, SECS_7D, nowUtc);
+    QDateTime earliest = next7d.isValid() ? next7d.addSecs(-SECS_7D)
+                                          : nowUtc.addSecs(-SECS_7D);
+
+    // 추가 크레딧은 월 단위 누적이라 이번 달 1일까지 거슬러 올라가야 한다.
+    const QDateTime billing = billingCycleStart(nowUtc);
+    if (billing < earliest)
+        earliest = billing;
+
+    // 오래 오프라인이었다면 deltaStart 가 7d 윈도우보다 이를 수 있다.
+    if (deltaStartUtc.isValid() && deltaStartUtc.toUTC() < earliest)
+        earliest = deltaStartUtc.toUTC();
+
+    return earliest;
 }
 
-// ── 핵심 스캔 로직 (static: 멤버 변수 미접근 → 스레드 안전) ─────────────────────
-
-UsageData UsageScanner::calcUsageForRange(const QDateTime &rangeStartUtc,
-                                           const QDateTime &reset5h,
-                                           const QDateTime &reset7d)
+ScanResult UsageScanner::aggregate(const QVector<TokenRecord> &records,
+                                   const QDateTime &nowUtc,
+                                   const QDateTime &deltaStartUtc,
+                                   const QDateTime &reset5h,
+                                   const QDateTime &reset7d,
+                                   qint64 limit5h,
+                                   qint64 limit7d)
 {
-    const QString projectsDir = CredentialsReader::claudeDir() + "/projects";
-    QSet<QString> seenRequestIds;
+    const bool      hasDelta   = deltaStartUtc.isValid();
+    const QDateTime deltaStart = hasDelta ? deltaStartUtc.toUTC() : QDateTime();
+
+    const QDateTime next5h = estimateNextReset(reset5h, SECS_5H, nowUtc);
+    const QDateTime next7d = estimateNextReset(reset7d, SECS_7D, nowUtc);
+
+    // full 윈도우: 다음 리셋에서 주기를 뺀 시점이 현재 윈도우의 시작이다.
+    const QDateTime full5hStart = next5h.isValid() ? next5h.addSecs(-SECS_5H)
+                                                   : nowUtc.addSecs(-SECS_5H);
+    const QDateTime full7dStart = next7d.isValid() ? next7d.addSecs(-SECS_7D)
+                                                   : nowUtc.addSecs(-SECS_7D);
+
+    // delta 윈도우: 델타 구간 안에서 리셋이 일어났다면 리셋 이후만 센다.
+    // (리셋 전 토큰까지 델타에 넣으면 mergeWithLastApi 에서 이중 계산된다)
+    QDateTime delta5hStart = deltaStart;
+    QDateTime delta7dStart = deltaStart;
+    if (hasDelta) {
+        if (reset5h.isValid() && reset5h.toUTC() > deltaStart && reset5h.toUTC() <= nowUtc)
+            delta5hStart = reset5h.toUTC();
+        if (reset7d.isValid() && reset7d.toUTC() > deltaStart && reset7d.toUTC() <= nowUtc)
+            delta7dStart = reset7d.toUTC();
+    }
+
+    const QDateTime billing = billingCycleStart(nowUtc);
+
+    qint64 full5hTok = 0, full7dTok = 0, delta5hTok = 0, delta7dTok = 0;
+    double fullCost = 0.0, deltaCost = 0.0;
+
+    // 파일을 두 번 읽는 대신 한 벌의 레코드로 full/delta 를 동시에 누산한다.
+    for (const TokenRecord &r : records) {
+        const qint64 tokens = r.input + r.output + r.cacheWrite
+                            + qRound64(r.cacheRead * CACHE_READ_WEIGHT);
+        const ModelPricing p = getPricingForModel(r.model);
+        const double cost = (r.input      * p.inputRate
+                           + r.output     * p.outputRate
+                           + r.cacheWrite * p.cacheWriteRate
+                           + r.cacheRead  * p.cacheReadRate) / 1'000'000.0;
+
+        if (r.ts >= full5hStart)  full5hTok += tokens;
+        if (r.ts >= full7dStart)  full7dTok += tokens;
+        if (r.ts >= billing)      fullCost  += cost;
+
+        if (hasDelta) {
+            if (r.ts >= delta5hStart) delta5hTok += tokens;
+            if (r.ts >= delta7dStart) delta7dTok += tokens;
+            // 추가 크레딧은 월 단위라 5h 리셋과 무관하게 deltaStart 를 기준으로 한다.
+            // delta5hStart 를 쓰면 5h 리셋이 낄 때마다 그 사이 비용이 통째로 사라진다.
+            if (r.ts >= deltaStart && r.ts >= billing) deltaCost += cost;
+        }
+    }
+
+    auto build = [&](qint64 tok5h, qint64 tok7d, double credits) {
+        UsageData d;
+        d.fromApi   = false;
+        d.fetchedAt = QDateTime::currentDateTime();
+
+        // extraUsage.enabled 는 API 만이 켤 수 있다. 스캐너가 켜 버리면 한도를
+        // 모르는 채로 "추가 결제 크레딧 $x / $0.00" 패널이 떠 버린다.
+        // 비용만 채우고, 표시 여부는 API 값을 가진 쪽(TrayApp)에 맡긴다.
+        d.extraUsage.enabled     = false;
+        d.extraUsage.usedCredits = credits;
+
+        if (tok5h > 0 || limit5h > 0) {
+            d.fiveHour.rawTokens   = tok5h;
+            d.fiveHour.limitTokens = limit5h;
+            d.fiveHour.resetsAt    = next5h;
+            d.fiveHour.valid       = true;
+            if (limit5h > 0)
+                d.fiveHour.utilization =
+                    qMin(1.0, static_cast<double>(tok5h) / static_cast<double>(limit5h));
+        }
+        if (tok7d > 0 || limit7d > 0) {
+            d.sevenDay.rawTokens   = tok7d;
+            d.sevenDay.limitTokens = limit7d;
+            d.sevenDay.resetsAt    = next7d;
+            d.sevenDay.valid       = true;
+            if (limit7d > 0)
+                d.sevenDay.utilization =
+                    qMin(1.0, static_cast<double>(tok7d) / static_cast<double>(limit7d));
+        }
+        return d;
+    };
+
+    ScanResult result;
+    result.hasDelta = hasDelta;
+    result.full     = build(full5hTok, full7dTok, fullCost);
+    result.delta    = hasDelta ? build(delta5hTok, delta7dTok, deltaCost) : result.full;
+    return result;
+}
+
+// ── JSONL 파싱 ────────────────────────────────────────────────────────────────
+
+QVector<TokenRecord> UsageScanner::readRecords(const QString &projectsDir,
+                                               const QDateTime &earliestUtc,
+                                               QString *recentModelOut)
+{
     QVector<TokenRecord> records;
+    QSet<QString> seenKeys;
+    QDateTime latestTs;
+    QString   latestModel;
 
     QDirIterator it(projectsDir, {"*.jsonl"}, QDir::Files, QDirIterator::Subdirectories);
     while (it.hasNext()) {
@@ -221,18 +349,17 @@ UsageData UsageScanner::calcUsageForRange(const QDateTime &rangeStartUtc,
 
             // requestId 기준 중복 제거 (같은 응답이 thinking/tool_use 등 여러 줄로 기록됨)
             const QString rid = obj["requestId"].toString();
-            const QString uid = obj["uuid"].toString();
-            const QString dedupKey = rid.isEmpty() ? uid : rid;
+            const QString dedupKey = rid.isEmpty() ? obj["uuid"].toString() : rid;
             if (!dedupKey.isEmpty()) {
-                if (seenRequestIds.contains(dedupKey))
+                if (seenKeys.contains(dedupKey))
                     continue;
-                seenRequestIds.insert(dedupKey);
+                seenKeys.insert(dedupKey);
             }
 
+            const QJsonObject message = obj["message"].toObject();
             QJsonObject usage = obj["usage"].toObject();
-            if (usage.isEmpty()) {
-                usage = obj["message"].toObject()["usage"].toObject();
-            }
+            if (usage.isEmpty())
+                usage = message["usage"].toObject();
             if (usage.isEmpty())
                 continue;
 
@@ -242,217 +369,178 @@ UsageData UsageScanner::calcUsageForRange(const QDateTime &rangeStartUtc,
                 ts = QDateTime::fromString(tsStr, Qt::ISODate);
             if (!ts.isValid())
                 continue;
-            ts.setTimeZone(QTimeZone::UTC);
+            // setTimeZone() 은 날짜·시각 필드를 그대로 두고 존만 바꿔 '재해석'한다.
+            // "+09:00" 오프셋이 붙은 값이 오면 가리키는 순간이 통째로 어긋나므로
+            // 반드시 변환(toUTC)해야 한다.
+            ts = ts.toUTC();
 
-            const QString model = obj["message"].toObject()["model"].toString();
-            qint64 input = usage["input_tokens"].toVariant().toLongLong();
-            qint64 output = usage["output_tokens"].toVariant().toLongLong();
-            qint64 cacheWrite = usage["cache_creation_input_tokens"].toVariant().toLongLong();
-            qint64 cacheRead = usage["cache_read_input_tokens"].toVariant().toLongLong();
+            const QString model = message["model"].toString();
 
-            records.append({ts, model, input, output, cacheWrite, cacheRead});
+            // 최근 모델은 집계 윈도우와 무관하게 '전체 중 최신'을 쓴다.
+            // 이것만 있으면 되므로 예전처럼 전체 레코드를 정렬할 필요가 없다.
+            if (!latestTs.isValid() || ts > latestTs) {
+                latestTs    = ts;
+                latestModel = model;
+            }
+
+            // 집계 대상 밖이면 담지 않는다 (메모리·순회 비용 절감)
+            if (earliestUtc.isValid() && ts < earliestUtc)
+                continue;
+
+            records.append({ts, model,
+                            usage["input_tokens"].toVariant().toLongLong(),
+                            usage["output_tokens"].toVariant().toLongLong(),
+                            usage["cache_creation_input_tokens"].toVariant().toLongLong(),
+                            usage["cache_read_input_tokens"].toVariant().toLongLong()});
         }
     }
 
-    std::sort(records.begin(), records.end(),
-              [](const TokenRecord &a, const TokenRecord &b) {
-                  return a.ts < b.ts;
-              });
+    if (recentModelOut)
+        *recentModelOut = latestModel;
+    return records;
+}
 
-    const QDateTime now = QDateTime::currentDateTimeUtc();
-    const bool deltaMode = rangeStartUtc.isValid();
+// ── 스캔 오케스트레이션 (static: 멤버 변수 미접근 → 스레드 안전) ─────────────────
 
-    // 리셋이 스캔 범위 안에서 발생했으면 리셋 시각 이후 토큰만 집계
-    // (리셋 전 토큰을 delta에 포함하면 mergeWithLastApi에서 이중 계산됨)
-    QDateTime window5hStart;
-    QDateTime window7dStart;
+ScanResult UsageScanner::scanLocal(const QDateTime &deltaStartUtc,
+                                   const QDateTime &reset5h,
+                                   const QDateTime &reset7d)
+{
+    const QDateTime now      = QDateTime::currentDateTimeUtc();
+    const QDateTime earliest = earliestRelevant(now, deltaStartUtc, reset7d);
 
-    // 마지막 리셋 시각이 이미 과거일 경우 주기를 더해 다음 리셋 시각 추정
-    auto estimateNext = [](const QDateTime &last, qint64 periodSecs,
-                           const QDateTime &now) -> QDateTime {
-        if (!last.isValid()) return {};
-        if (last.toUTC() > now) return last;
-        const qint64 elapsed = last.toUTC().secsTo(now);
-        return last.toUTC().addSecs((elapsed / periodSecs + 1) * periodSecs);
-    };
+    QString recentModel;
+    const QVector<TokenRecord> records =
+        readRecords(CredentialsReader::claudeDir() + "/projects", earliest, &recentModel);
 
-    if (deltaMode) {
-        const bool r5InRange = reset5h.isValid()
-            && reset5h.toUTC() > rangeStartUtc
-            && reset5h.toUTC() <= now;
-        const bool r7InRange = reset7d.isValid()
-            && reset7d.toUTC() > rangeStartUtc
-            && reset7d.toUTC() <= now;
-        window5hStart = r5InRange ? reset5h.toUTC() : rangeStartUtc;
-        window7dStart = r7InRange ? reset7d.toUTC() : rangeStartUtc;
-    } else {
-        // full 모드: 리셋 시각(resetsAt) 힌트가 있으면 해당 주기의 진짜 시작 시점을 계산
-        QDateTime nextReset5h = reset5h.isValid() ? estimateNext(reset5h, 5LL * 3600, now) : QDateTime();
-        QDateTime nextReset7d = reset7d.isValid() ? estimateNext(reset7d, 7LL * 24 * 3600, now) : QDateTime();
+    const qint64 limit5h = planLimit5h();
+    const qint64 limit7d = planLimit7d();
 
-        window5hStart = nextReset5h.isValid() ? nextReset5h.addSecs(-5LL * 3600) : now.addSecs(-5LL * 3600);
-        window7dStart = nextReset7d.isValid() ? nextReset7d.addDays(-7) : now.addDays(-7);
-    }
+    ScanResult result = aggregate(records, now, deltaStartUtc, reset5h, reset7d,
+                                  limit5h, limit7d);
+    result.full.recentModel  = recentModel;
+    result.delta.recentModel = recentModel;
 
-    qint64 rolling5hTokens = 0;
-    qint64 rolling7dTokens = 0;
-    double rolling5hCost = 0.0;
-    double rolling7dCost = 0.0;
-
-    // 추가 결제 크레딧 누적을 위해 당월 1일 UTC 시각 계산
-    QDateTime billingCycleStart(QDate(now.date().year(), now.date().month(), 1), QTime(0, 0), QTimeZone::UTC);
-    double monthlyAccumulatedCost = 0.0;
-
-    for (const auto &record : records) {
-        qint64 discountedTokens = record.input + record.output + record.cacheWrite + qRound64(record.cacheRead * 0.1);
-        ModelPricing p = getPricingForModel(record.model);
-        double cost = (record.input * p.inputRate +
-                       record.output * p.outputRate +
-                       record.cacheWrite * p.cacheWriteRate +
-                       record.cacheRead * p.cacheReadRate) / 1000000.0;
-
-        if (record.ts >= window7dStart) {
-            rolling7dTokens += discountedTokens;
-            rolling7dCost += cost;
-        }
-        if (record.ts >= window5hStart) {
-            rolling5hTokens += discountedTokens;
-            rolling5hCost += cost;
-        }
-        if (record.ts >= billingCycleStart) {
-            monthlyAccumulatedCost += cost;
-        }
-    }
-
-    const QString planType = CredentialsReader::subscriptionType();
-    const qint64 limit5h = PLAN_LIMITS_5H.value(planType, 0);
-    const qint64 limit7d = PLAN_LIMITS_7D.value(planType, 0);
-
-    qDebug() << "[UsageScanner] plan=" << planType
-             << "deltaMode=" << deltaMode
-             << "rolling5h=" << rolling5hTokens
-             << "rolling7d=" << rolling7dTokens
+    qDebug() << "[UsageScanner] plan=" << CredentialsReader::subscriptionType()
+             << "records=" << records.size()
+             << "full5h=" << result.full.fiveHour.rawTokens
+             << "full7d=" << result.full.sevenDay.rawTokens
+             << "delta5h=" << result.delta.fiveHour.rawTokens
              << "limit5h=" << limit5h
              << "limit7d=" << limit7d
-             << "rolling5hCost=" << rolling5hCost
-             << "rolling7dCost=" << rolling7dCost
-             << "monthlyAccumulatedCost=" << monthlyAccumulatedCost;
+             << "monthCost=" << result.full.extraUsage.usedCredits
+             << "deltaCost=" << result.delta.extraUsage.usedCredits;
 
-    UsageData data;
-    data.fromApi  = false;
-    data.fetchedAt = QDateTime::currentDateTime();
-    data.recentModel = records.isEmpty() ? "" : records.last().model;
+    return result;
+}
 
-    data.extraUsage.enabled = true;
-    data.extraUsage.usedCredits = deltaMode ? rolling5hCost : monthlyAccumulatedCost;
+// 계열별·버전별 요율. QMap<FamilyName, QMap<VersionName, ModelPricing>>
+using PricingTree = QMap<QString, QMap<QString, ModelPricing>>;
 
-    if (rolling5hTokens > 0 || limit5h > 0) {
-        data.fiveHour.rawTokens   = rolling5hTokens;
-        data.fiveHour.limitTokens = limit5h;
-        data.fiveHour.resetsAt    = estimateNext(reset5h, 5LL * 3600, now);
-        data.fiveHour.valid       = true;
-        if (limit5h > 0)
-            data.fiveHour.utilization = qMin(1.0, static_cast<double>(rolling5hTokens) /
-                                                  static_cast<double>(limit5h));
+// 매직 스태틱: 초기화가 한 번만, 스레드 안전하게 일어남을 C++11 이 보장한다.
+// (예전의 `static QMap + static bool loaded` 조합은 이 보장을 받지 못해
+//  워커 스레드 스캔과 메인 스레드 호출이 겹치면 QMap 동시 쓰기로 UB 였다.)
+static const PricingTree &pricingTree()
+{
+    static const PricingTree tree = []() {
+        PricingTree t;
+        QFile file(":/model_pricing.json");
+        if (!file.open(QIODevice::ReadOnly)) {
+            qWarning() << "[UsageScanner] model_pricing.json 을 열 수 없음 - 기본 요율 사용";
+            return t;
+        }
+        const QJsonObject root = QJsonDocument::fromJson(file.readAll()).object();
+        for (auto familyIt = root.constBegin(); familyIt != root.constEnd(); ++familyIt) {
+            if (familyIt.key().startsWith('_'))   // "_comment" 등 메타 키는 계열이 아니다
+                continue;
+            const QJsonObject versionObj = familyIt.value().toObject();
+            QMap<QString, ModelPricing> versionMap;
+            for (auto versionIt = versionObj.constBegin();
+                 versionIt != versionObj.constEnd(); ++versionIt) {
+                const QJsonObject rateObj = versionIt.value().toObject();
+                ModelPricing p;
+                p.inputRate      = rateObj["input_rate"].toDouble();
+                p.outputRate     = rateObj["output_rate"].toDouble();
+                p.cacheWriteRate = rateObj["cache_write_rate"].toDouble();
+                p.cacheReadRate  = rateObj["cache_read_rate"].toDouble();
+                versionMap.insert(versionIt.key(), p);
+            }
+            t.insert(familyIt.key(), versionMap);
+        }
+        return t;
+    }();
+    return tree;
+}
+
+// 모델 ID 에서 버전 문자열을 뽑는다.
+//   "claude-opus-4-1-20250805"   → "4.1"
+//   "claude-3-5-sonnet-20241022" → "3.5"
+//   "claude-opus-5"              → "5"
+// 날짜 꼬리(8자리 이상 숫자)를 반드시 떼야 한다. 예전에는 모델 ID 전체를
+// contains() 로 훑어서 "20250805" 안의 '5' 가 버전 키 "5" 에 걸렸고,
+// 그 결과 Opus 4.1 이 Opus 5 요율(1/3 가격)로 계산됐다.
+static QString extractVersion(const QString &lowerName)
+{
+    QStringList nums;
+    const QStringList tokens = lowerName.split('-', Qt::SkipEmptyParts);
+    for (const QString &tok : tokens) {
+        bool allDigits = true;
+        for (const QChar &c : tok) {
+            if (!c.isDigit()) { allDigits = false; break; }
+        }
+        if (!allDigits || tok.length() >= 8)   // 비숫자 토큰 / 날짜 꼬리는 제외
+            continue;
+        nums.append(tok);
     }
-
-    if (rolling7dTokens > 0 || limit7d > 0) {
-        data.sevenDay.rawTokens   = rolling7dTokens;
-        data.sevenDay.limitTokens = limit7d;
-        data.sevenDay.resetsAt    = estimateNext(reset7d, 7LL * 24 * 3600, now);
-        data.sevenDay.valid       = true;
-        if (limit7d > 0)
-            data.sevenDay.utilization = qMin(1.0, static_cast<double>(rolling7dTokens) /
-                                                  static_cast<double>(limit7d));
-    }
-
-    return data;
+    return nums.join('.');
 }
 
 ModelPricing UsageScanner::getPricingForModel(const QString &modelName)
 {
-    // 계열별 버전별 요율 저장 맵
-    // QMap<FamilyName, QMap<VersionName, ModelPricing>>
-    static QMap<QString, QMap<QString, ModelPricing>> pricingTree;
-    static bool loaded = false;
-
-    if (!loaded) {
-        QFile file(":/model_pricing.json");
-        if (file.open(QIODevice::ReadOnly)) {
-            QJsonObject root = QJsonDocument::fromJson(file.readAll()).object();
-            for (auto familyIt = root.begin(); familyIt != root.end(); ++familyIt) {
-                QString family = familyIt.key();
-                QJsonObject versionObj = familyIt.value().toObject();
-                QMap<QString, ModelPricing> versionMap;
-                
-                for (auto versionIt = versionObj.begin(); versionIt != versionObj.end(); ++versionIt) {
-                    QString version = versionIt.key();
-                    QJsonObject rateObj = versionIt.value().toObject();
-                    
-                    ModelPricing p;
-                    p.inputRate = rateObj["input_rate"].toDouble();
-                    p.outputRate = rateObj["output_rate"].toDouble();
-                    p.cacheWriteRate = rateObj["cache_write_rate"].toDouble();
-                    p.cacheReadRate = rateObj["cache_read_rate"].toDouble();
-                    
-                    versionMap[version] = p;
-                }
-                pricingTree[family] = versionMap;
-            }
-            loaded = true;
-        }
-    }
-
-    // 하드코딩 디폴트 요율 (Sonnet 5 기준)
+    // 요율 파일을 못 읽었을 때의 최종 폴백 (Sonnet 5 기준)
     ModelPricing defaultPricing;
-    defaultPricing.inputRate = 3.00;
-    defaultPricing.outputRate = 15.00;
+    defaultPricing.inputRate      = 3.00;
+    defaultPricing.outputRate     = 15.00;
     defaultPricing.cacheWriteRate = 3.75;
-    defaultPricing.cacheReadRate = 0.30;
+    defaultPricing.cacheReadRate  = 0.30;
 
+    const PricingTree &tree = pricingTree();
     const QString lowerName = modelName.toLower();
-    
+
     // 1단계: 계열(Family) 매칭
     QString matchedFamily;
-    for (auto it = pricingTree.begin(); it != pricingTree.end(); ++it) {
+    for (auto it = tree.constBegin(); it != tree.constEnd(); ++it) {
         if (lowerName.contains(it.key())) {
             matchedFamily = it.key();
             break;
         }
     }
 
-    if (matchedFamily.isEmpty()) {
-        if (pricingTree.contains("sonnet") && pricingTree["sonnet"].contains("5")) {
-            return pricingTree["sonnet"]["5"];
-        }
-        return defaultPricing;
-    }
+    if (matchedFamily.isEmpty())
+        return tree.value("sonnet").value("5", defaultPricing);
 
-    // 2단계: 버전(Version) 매칭 (Longest match 기법)
-    const QMap<QString, ModelPricing> &versionMap = pricingTree[matchedFamily];
+    // 2단계: 버전(Version) 매칭
+    const QMap<QString, ModelPricing> versionMap = tree.value(matchedFamily);
+    const QString version = extractVersion(lowerName);
+
+    if (versionMap.contains(version))
+        return versionMap.value(version);
+
+    // 정확히 없으면 가장 긴 접두 일치 ("4.5.1" → "4.5", "3.5" 가 "3" 보다 우선)
     QString bestVersionKey;
-    int bestVersionLength = 0;
-
-    for (auto it = versionMap.begin(); it != versionMap.end(); ++it) {
-        const QString &version = it.key();
-        if (lowerName.contains(version)) {
-            if (version.length() > bestVersionLength) {
-                bestVersionKey = version;
-                bestVersionLength = version.length();
-            }
-        }
+    for (auto it = versionMap.constBegin(); it != versionMap.constEnd(); ++it) {
+        if (version.startsWith(it.key()) && it.key().length() > bestVersionKey.length())
+            bestVersionKey = it.key();
     }
-
-    if (bestVersionLength > 0) {
+    if (!bestVersionKey.isEmpty())
         return versionMap.value(bestVersionKey);
-    }
 
-    // 버전을 찾지 못한 경우의 폴백
-    if (!versionMap.isEmpty()) {
-        if (versionMap.contains("5")) return versionMap.value("5");
-        if (versionMap.contains("3.5")) return versionMap.value("3.5");
-        return versionMap.begin().value();
-    }
+    // 계열은 맞췄지만 버전을 못 찾은 경우(= 아직 요율표에 없는 신모델)의 폴백.
+    // QMap 은 키 정렬 상태이고 버전 키는 "3" < "3.5" < "4" < "4.8" < "5" 처럼
+    // 문자열 순서가 곧 버전 순서이므로, 마지막 키가 그 계열의 최신 요율이다.
+    // (두 자리 메이저 버전 "10" 이 등장하면 "3" 보다 앞서므로 그때 손봐야 한다.)
+    if (!versionMap.isEmpty())
+        return std::prev(versionMap.constEnd()).value();
 
     return defaultPricing;
 }

@@ -45,8 +45,6 @@ private:
     void updateStatusLine();
     void applyPending();
 
-    void toggleCompact();
-
     QuotaPanel  *m_panel5h          = nullptr;
     QuotaPanel  *m_panel7d          = nullptr;
     QFrame      *m_sepExtra        = nullptr;

@@ -17,6 +17,9 @@ public:
     static int pollIntervalMs();
     void checkForUpdates();
 
+    // "1.2.0" > "1.1.9" 형태의 시맨틱 버전 비교. 순수 함수라 테스트에서 직접 부른다.
+    static bool isNewerVersion(const QString &candidate, const QString &current);
+
 signals:
     void fetchStarted();
     void usageFetched(UsageData data);
