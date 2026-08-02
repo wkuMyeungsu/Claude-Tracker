@@ -25,6 +25,8 @@ set(PROJECT_SOURCES
     usagescanner.cpp
     usagemerge.h
     usagemerge.cpp
+    usagecalibrator.h
+    usagecalibrator.cpp
     quotapanel.h
     quotapanel.cpp
     trayapp.h

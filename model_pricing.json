@@ -1,11 +1,12 @@
 {
-  "_comment": "USD per 1M tokens. Source: https://platform.claude.com/docs/en/about-claude/pricing (2026-08-02 확인). cache_write 는 5분 캐시(입력가 x1.25), cache_read 는 캐시 히트(입력가 x0.1). sonnet 5 는 2026-08-31 까지 도입가 $2/$10 이 적용되지만, 릴리스 수명을 고려해 2026-09-01 이후의 정가 $3/$15 를 넣는다.",
+  "_comment": "USD per 1M tokens. Source: https://platform.claude.com/docs/en/about-claude/pricing (2026-08-02 확인). cache_write_rate=5분 캐시(입력가 x1.25), cache_write_1h_rate=1시간 캐시(입력가 x2), cache_read_rate=캐시 히트(입력가 x0.1). Claude Code 는 1시간 캐시를 주로 쓰므로 두 요율을 반드시 구분해야 한다. fast_multiplier 는 usage.speed=='fast' 일 때 전 항목에 곱하는 배수이며, 값이 있는 모델(Opus 5/4.8)만 fast mode 를 지원한다. sonnet 5 는 2026-08-31 까지 도입가 $2/$10 이지만 릴리스 수명을 고려해 그 이후의 정가 $3/$15 를 넣는다.",
 
   "fable": {
     "5": {
       "input_rate": 10.00,
       "output_rate": 50.00,
       "cache_write_rate": 12.50,
+      "cache_write_1h_rate": 20.00,
       "cache_read_rate": 1.00
     }
   },
@@ -14,6 +15,7 @@
       "input_rate": 10.00,
       "output_rate": 50.00,
       "cache_write_rate": 12.50,
+      "cache_write_1h_rate": 20.00,
       "cache_read_rate": 1.00
     }
   },
@@ -22,48 +24,58 @@
       "input_rate": 5.00,
       "output_rate": 25.00,
       "cache_write_rate": 6.25,
-      "cache_read_rate": 0.50
+      "cache_write_1h_rate": 10.00,
+      "cache_read_rate": 0.50,
+      "fast_multiplier": 2.00
     },
     "4.8": {
       "input_rate": 5.00,
       "output_rate": 25.00,
       "cache_write_rate": 6.25,
-      "cache_read_rate": 0.50
+      "cache_write_1h_rate": 10.00,
+      "cache_read_rate": 0.50,
+      "fast_multiplier": 2.00
     },
     "4.7": {
       "input_rate": 5.00,
       "output_rate": 25.00,
       "cache_write_rate": 6.25,
+      "cache_write_1h_rate": 10.00,
       "cache_read_rate": 0.50
     },
     "4.6": {
       "input_rate": 5.00,
       "output_rate": 25.00,
       "cache_write_rate": 6.25,
+      "cache_write_1h_rate": 10.00,
       "cache_read_rate": 0.50
     },
     "4.5": {
       "input_rate": 5.00,
       "output_rate": 25.00,
       "cache_write_rate": 6.25,
+      "cache_write_1h_rate": 10.00,
       "cache_read_rate": 0.50
     },
     "4.1": {
       "input_rate": 15.00,
       "output_rate": 75.00,
       "cache_write_rate": 18.75,
+      "cache_write_1h_rate": 30.00,
       "cache_read_rate": 1.50
     },
     "4": {
       "input_rate": 15.00,
       "output_rate": 75.00,
       "cache_write_rate": 18.75,
+      "cache_write_1h_rate": 30.00,
       "cache_read_rate": 1.50
     },
     "3": {
       "input_rate": 15.00,
       "output_rate": 75.00,
       "cache_write_rate": 18.75,
+      "cache_write_1h_rate": 30.00,
       "cache_read_rate": 1.50
     }
   },
@@ -72,42 +84,49 @@
       "input_rate": 3.00,
       "output_rate": 15.00,
       "cache_write_rate": 3.75,
+      "cache_write_1h_rate": 6.00,
       "cache_read_rate": 0.30
     },
     "4.6": {
       "input_rate": 3.00,
       "output_rate": 15.00,
       "cache_write_rate": 3.75,
+      "cache_write_1h_rate": 6.00,
       "cache_read_rate": 0.30
     },
     "4.5": {
       "input_rate": 3.00,
       "output_rate": 15.00,
       "cache_write_rate": 3.75,
+      "cache_write_1h_rate": 6.00,
       "cache_read_rate": 0.30
     },
     "4": {
       "input_rate": 3.00,
       "output_rate": 15.00,
       "cache_write_rate": 3.75,
+      "cache_write_1h_rate": 6.00,
       "cache_read_rate": 0.30
     },
     "3.7": {
       "input_rate": 3.00,
       "output_rate": 15.00,
       "cache_write_rate": 3.75,
+      "cache_write_1h_rate": 6.00,
       "cache_read_rate": 0.30
     },
     "3.5": {
       "input_rate": 3.00,
       "output_rate": 15.00,
       "cache_write_rate": 3.75,
+      "cache_write_1h_rate": 6.00,
       "cache_read_rate": 0.30
     },
     "3": {
       "input_rate": 3.00,
       "output_rate": 15.00,
       "cache_write_rate": 3.75,
+      "cache_write_1h_rate": 6.00,
       "cache_read_rate": 0.30
     }
   },
@@ -116,18 +135,21 @@
       "input_rate": 1.00,
       "output_rate": 5.00,
       "cache_write_rate": 1.25,
+      "cache_write_1h_rate": 2.00,
       "cache_read_rate": 0.10
     },
     "3.5": {
       "input_rate": 0.80,
       "output_rate": 4.00,
       "cache_write_rate": 1.00,
+      "cache_write_1h_rate": 1.60,
       "cache_read_rate": 0.08
     },
     "3": {
       "input_rate": 0.25,
       "output_rate": 1.25,
       "cache_write_rate": 0.30,
+      "cache_write_1h_rate": 0.50,
       "cache_read_rate": 0.03
     }
   }

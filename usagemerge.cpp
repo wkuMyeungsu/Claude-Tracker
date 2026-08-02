@@ -34,6 +34,52 @@ QuotaInfo mergeQuota(const QuotaInfo &apiQuota, const QuotaInfo &deltaQuota,
 
 } // namespace
 
+double UsageMerge::chargeableRatioFor(const QuotaInfo &api, const QuotaInfo &delta,
+                                      bool resetOccurred)
+{
+    if (!api.valid)
+        return -1.0;                      // 이 창으로는 판단할 수 없다
+
+    if (resetOccurred) {
+        // 델타 구간 안에서 리셋이 일어났다. 델타 '비용'은 리셋 전 지출까지
+        // 포함하는데(크레딧은 월 단위라 5h 리셋으로 자르면 안 된다) 델타
+        // '비율'은 리셋 이후만 센다. 두 창이 어긋나 정확한 안분이 불가능하다.
+        //
+        // 리셋 직전에 한도를 이미 채운 상태였다면 그 지출은 실제로 크레딧에서
+        // 나갔으므로 전액 청구한다. 여기서 0 을 돌려주면 리셋 직전 초과분이
+        // 통째로 사라진다(aggregate 단계에서 일부러 살려둔 비용이다).
+        return api.utilization >= 1.0 ? 1.0 : 0.0;
+    }
+
+    const double deltaUtil = delta.valid ? delta.utilization : 0.0;
+    const double totalUtil = api.utilization + deltaUtil;
+
+    if (totalUtil <= 1.0)
+        return 0.0;                       // 한도 안 → 크레딧은 아직 안 쓴다
+    if (deltaUtil <= 0.0)
+        return 1.0;                       // 델타가 없는데 이미 초과 상태
+
+    // 델타 중 100% 를 넘어선 몫만 청구한다.
+    // 주의: 델타 구간 안에서 비용이 사용률에 비례해 고르게 발생했다고 보는
+    // 선형 근사다. Opus 와 Haiku 가 섞이면 실제와 어긋나지만, 다음 API 응답이
+    // 정확값으로 덮어쓰므로 오차는 폴링 간격(5분) 안으로 제한된다.
+    return qMin(1.0, (totalUtil - 1.0) / deltaUtil);
+}
+
+double UsageMerge::chargeableRatio(const UsageData &lastApi, const UsageData &delta,
+                                   bool reset5hOccurred, bool reset7dOccurred)
+{
+    // 5h 만 보면 안 된다. 주간 한도를 다 쓴 상태에서 5시간 창이 막 리셋돼
+    // 30% 라면, 실제로는 크레딧이 나가는데 청구를 0 으로 막아버린다.
+    const double r5h =
+        chargeableRatioFor(lastApi.fiveHour, delta.fiveHour, reset5hOccurred);
+    const double r7d =
+        chargeableRatioFor(lastApi.sevenDay, delta.sevenDay, reset7dOccurred);
+
+    const double best = qMax(r5h, r7d);
+    return best < 0.0 ? 1.0 : best;       // 판단 가능한 창이 없으면 전액 청구
+}
+
 UsageData UsageMerge::mergeWithLastApi(const UsageData &lastApi,
                                        const UsageData &delta,
                                        const QDateTime &nowUtc)
@@ -89,27 +135,13 @@ UsageData UsageMerge::mergeWithLastApi(const UsageData &lastApi,
             ? 0.0
             : lastApi.extraUsage.usedCredits;
 
-        // 5시간 한도를 초과한 비율(utilization)만큼만 델타 비용(추가 결제 크레딧)에 반영한다.
-        double chargeableRatio = 0.0;
-        if (merged.fiveHour.valid) {
-            const double apiUtil = reset5hOccurred ? 0.0 : lastApi.fiveHour.utilization;
-            const double deltaUtil = delta.fiveHour.utilization;
-            const double totalUtil = apiUtil + deltaUtil;
-            
-            if (totalUtil > 1.0 && deltaUtil > 0.0) {
-                const double overageUtil = totalUtil - 1.0;
-                chargeableRatio = qMin(1.0, overageUtil / deltaUtil);
-            } else if (totalUtil <= 1.0) {
-                chargeableRatio = 0.0; // 한도 미초과 시 무과금
-            } else {
-                chargeableRatio = 1.0; // 예외 상황 (deltaUtil <= 0)
-            }
-        } else {
-            // 5시간 쿼터 자체가 없는 플랜(무제한 등)이면 일단 전액 과금으로 본다.
-            chargeableRatio = 1.0;
-        }
+        // 추가 결제 크레딧은 플랜 한도를 다 쓴 뒤에야 소모된다. 한도 안에서
+        // 쓴 토큰까지 크레딧에 더하면 쓰지도 않은 돈이 올라간다.
+        const double ratio =
+            chargeableRatio(lastApi, delta, reset5hOccurred, reset7dOccurred);
 
-        merged.extraUsage.usedCredits = apiBaseCredits + (delta.extraUsage.usedCredits * chargeableRatio);
+        merged.extraUsage.usedCredits =
+            apiBaseCredits + delta.extraUsage.usedCredits * ratio;
         if (merged.extraUsage.limitDollars > 0.0) {
             merged.extraUsage.utilization =
                 qMin(1.0, merged.extraUsage.usedCredits / merged.extraUsage.limitDollars);

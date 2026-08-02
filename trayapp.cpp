@@ -23,6 +23,14 @@ TrayApp::TrayApp(QObject *parent)
     , m_scanner(new UsageScanner(this))
     , m_countdownTimer(new QTimer(this))
 {
+    // 보정 계수: 디스크에 학습분이 있으면 이어서 쓰고, 없으면 플랜 한도 prior 로
+    // 시작한다. prior 는 예전 하드코딩 공식과 동일해서 첫 실행 표시가 변하지 않는다.
+    m_calibPriors = UsageCalibrator::priorsFor(UsageScanner::planLimit5h(),
+                                               UsageScanner::planLimit7d());
+    if (!UsageCalibrator::loadFrom("calibration", m_calibration))
+        m_calibration = m_calibPriors;
+    m_scanner->setCalibration(m_calibration);
+
     m_contextMenu->addAction("종료", qApp, &QApplication::quit);
 
     m_tray->setContextMenu(m_contextMenu);
@@ -94,6 +102,11 @@ void TrayApp::onUsageFetched(UsageData data)
     m_scanner->setWindowHints(data.fiveHour.resetsAt, data.sevenDay.resetsAt);
     m_scanner->setDeltaStart(data.fetchedAt);
 
+    // 방금 정답지를 받았다. 같은 윈도우를 로컬로 집계한 특징벡터가 있어야
+    // 관측 1건이 완성되므로, 스캔을 요청해 두고 결과가 오면 학습한다.
+    m_calibObservationPending = true;
+    m_scanner->requestScan();
+
     // resetsAt 영속 저장 (앱 재시작 후에도 추정에 활용)
     QSettings s("ClaudeTray", "ClaudeTray");
     s.setValue("reset5h", data.fiveHour.resetsAt.toString(Qt::ISODate));
@@ -122,11 +135,13 @@ void TrayApp::onFetchFailed(QString reason, bool networkError)
 }
 
 // full, delta 는 백그라운드 스캔에서 이미 계산된 결과 → 메인 스레드 재스캔 없음
-void TrayApp::onLocalUsage(UsageData full, UsageData delta, bool hasDelta)
+void TrayApp::onLocalUsage(ScanResult result)
 {
-    const UsageData merged = (m_hasLastApiData && hasDelta)
-        ? mergeWithLastApi(delta)
-        : full;
+    trainCalibration(result);
+
+    const UsageData merged = (m_hasLastApiData && result.hasDelta)
+        ? mergeWithLastApi(result.delta)
+        : result.full;
     m_current = merged;
     applyData(merged);
 
@@ -168,9 +183,43 @@ UsageData TrayApp::mergeWithLastApi(const UsageData &data) const
         return data;
 
     return UsageMerge::mergeWithLastApi(m_lastApiData, data,
-                                        UsageScanner::planLimit5h(),
-                                        UsageScanner::planLimit7d(),
                                         QDateTime::currentDateTimeUtc());
+}
+
+// API 응답 1건 = 정답지 1장. 같은 시점의 로컬 특징벡터와 짝지어 계수를 당긴다.
+// 관측이 쌓일수록 "토큰 1개가 할당량의 몇 %를 먹는가"가 이 사용자의 실제
+// 사용 패턴(모델 구성·캐시 비율·플랜)에 맞춰 정확해진다.
+void TrayApp::trainCalibration(const ScanResult &result)
+{
+    if (!m_calibObservationPending || !m_hasLastApiData)
+        return;
+    m_calibObservationPending = false;
+
+    bool learned = false;
+    auto tryObserve = [&](QuotaCoefficients &coeff, const UsageFeatures &features,
+                          const QuotaInfo &truth, const QuotaCoefficients &prior) {
+        if (!truth.valid)
+            return;
+        if (UsageCalibrator::observe(coeff, features, truth.utilization, prior))
+            learned = true;
+    };
+
+    tryObserve(m_calibration.fiveHour, result.full5hFeatures,
+               m_lastApiData.fiveHour, m_calibPriors.fiveHour);
+    tryObserve(m_calibration.sevenDay, result.full7dFeatures,
+               m_lastApiData.sevenDay, m_calibPriors.sevenDay);
+    tryObserve(m_calibration.sevenDaySonnet, result.full7dSonnetFeatures,
+               m_lastApiData.sevenDaySonnet, m_calibPriors.sevenDaySonnet);
+
+    if (!learned)
+        return;
+
+    m_scanner->setCalibration(m_calibration);
+    UsageCalibrator::saveTo("calibration", m_calibration);
+
+    qDebug() << "[TrayApp] 보정 학습 samples 5h=" << m_calibration.fiveHour.samples
+             << "7d=" << m_calibration.sevenDay.samples
+             << "7dSonnet=" << m_calibration.sevenDaySonnet.samples;
 }
 
 void TrayApp::updateCountdowns()

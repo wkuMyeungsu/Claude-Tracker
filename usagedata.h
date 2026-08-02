@@ -27,6 +27,9 @@ struct ExtraUsageInfo {
 struct UsageData {
     QuotaInfo fiveHour;
     QuotaInfo sevenDay;
+    // Sonnet 전용 주간 한도. API 가 seven_day 와 따로 주는 것 자체가
+    // 모델별 미터링이 존재한다는 증거라, 보정기도 이 창을 따로 학습한다.
+    QuotaInfo sevenDaySonnet;
     ExtraUsageInfo extraUsage;
     QString   recentModel;
     QDateTime fetchedAt;

@@ -154,7 +154,8 @@ void UsageApiClient::onReplyFinished(QNetworkReply *reply)
     data.fetchedAt = QDateTime::currentDateTime();
     data.fiveHour = parseQuota(root["five_hour"].toObject());
     data.sevenDay = parseQuota(root["seven_day"].toObject());
-    // 응답에는 "seven_day_sonnet" 도 있지만 표시하는 곳이 없어 파싱하지 않는다.
+    // 화면에는 안 나오지만 보정기가 Sonnet 전용 주간 창을 학습하는 데 쓴다.
+    data.sevenDaySonnet = parseQuota(root["seven_day_sonnet"].toObject());
 
     if (root.contains("extra_usage")) {
         QJsonObject extraObj = root["extra_usage"].toObject();

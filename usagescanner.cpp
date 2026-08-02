@@ -35,8 +35,8 @@ constexpr int WATCHLIST_MS = 5 * 60 * 1000;   // 감시 목록 갱신 간격
 constexpr qint64 SECS_5H = 5LL * 3600;
 constexpr qint64 SECS_7D = 7LL * 24 * 3600;
 
-// 캐시 읽기는 신규 입력보다 훨씬 저렴하므로 할당량 집계에서 10% 로 가중한다.
-constexpr double CACHE_READ_WEIGHT = 0.1;
+// 웹 검색 과금: $10 / 1,000회.
+constexpr double WEB_SEARCH_COST = 10.0 / 1000.0;
 
 // 추가 결제 크레딧은 월 단위로 누적되므로 이번 달 1일(UTC)이 기준점이다.
 QDateTime billingCycleStart(const QDateTime &nowUtc)
@@ -51,6 +51,12 @@ UsageScanner::UsageScanner(QObject *parent)
     , m_watcher(new QFileSystemWatcher(this))
     , m_debounceTimer(new QTimer(this))
 {
+    qRegisterMetaType<ScanResult>("ScanResult");
+
+    // 학습된 계수가 주입되기 전까지는 플랜 한도에서 유도한 prior 로 동작한다.
+    // prior 는 예전 하드코딩 공식과 동일하므로 첫 실행 화면이 달라지지 않는다.
+    m_calibration = UsageCalibrator::priorsFor(planLimit5h(), planLimit7d());
+
     connect(m_watcher, &QFileSystemWatcher::directoryChanged,
             this, &UsageScanner::onDirectoryChanged);
     connect(m_watcher, &QFileSystemWatcher::fileChanged,
@@ -91,6 +97,11 @@ void UsageScanner::setDeltaStart(const QDateTime &since)
     m_deltaStart = since.toUTC();
 }
 
+void UsageScanner::setCalibration(const CalibrationSet &calibration)
+{
+    m_calibration = calibration;
+}
+
 // ── 파일 감시 이벤트 ──────────────────────────────────────────────────────────
 
 void UsageScanner::onDirectoryChanged(const QString &)
@@ -102,8 +113,10 @@ void UsageScanner::onDirectoryChanged(const QString &)
 
 void UsageScanner::onFileChanged(const QString &path)
 {
-    // Windows에서 fileChanged 이벤트 후 파일이 watch list에서 제거될 수 있어 재등록
-    if (!path.isEmpty())
+    // Windows 에서 fileChanged 이벤트 후 파일이 watch list 에서 제거될 수 있어 재등록.
+    // 단, '삭제'된 경우에도 같은 시그널이 오므로 존재 확인이 필요하다. 없는 경로에
+    // addPath 를 부르면 실패하면서 Qt 경고만 남는다(삭제된 세션마다 반복 발생).
+    if (!path.isEmpty() && QFile::exists(path))
         m_watcher->addPath(path);
     emit activityDetected();    // 즉시 알림 (투명도 제어용)
     m_debounceTimer->start();   // 타이머 리셋: DEBOUNCE_MS 후 스캔
@@ -113,24 +126,49 @@ void UsageScanner::refreshWatchList()
 {
     const QString projectsDir = CredentialsReader::claudeDir() + "/projects";
 
-    if (!m_watcher->directories().contains(projectsDir))
-        m_watcher->addPath(projectsDir);
+    // 감시 대상은 readRecords 가 읽는 범위와 정확히 같아야 한다.
+    // 예전에는 projects/<프로젝트> 한 단계만 훑었는데, 서브에이전트 로그는
+    // projects/<프로젝트>/<세션UUID>/subagents/*.jsonl 에 쌓인다.
+    // 읽기는 되지만 감시가 안 돼서 서브에이전트 사용량이 최대 5분(watchTimer
+    // 주기)까지 화면에 안 나타났다. 이제 하위 디렉터리를 전부 따라간다.
+    QSet<QString> wantDirs{projectsDir};
+    QDirIterator dirs(projectsDir, QDir::Dirs | QDir::NoDotAndDotDot,
+                      QDirIterator::Subdirectories);
+    while (dirs.hasNext())
+        wantDirs.insert(dirs.next());
 
-    QDirIterator dirs(projectsDir, QDir::Dirs | QDir::NoDotAndDotDot);
-    while (dirs.hasNext()) {
-        const QString dir = dirs.next();
-        if (!m_watcher->directories().contains(dir))
-            m_watcher->addPath(dir);
+    QSet<QString> wantFiles;
+    QDirIterator files(projectsDir, {"*.jsonl"}, QDir::Files,
+                       QDirIterator::Subdirectories);
+    while (files.hasNext())
+        wantFiles.insert(files.next());
 
-        QDirIterator files(dir, {"*.jsonl"}, QDir::Files);
-        while (files.hasNext()) {
-            const QString filePath = files.next();
-            if (!m_watchedFiles.contains(filePath)) {
-                m_watcher->addPath(filePath);
-                m_watchedFiles.insert(filePath);
-            }
+    // 예전에는 추가만 하고 제거를 하지 않았다. 프로젝트를 지우거나 세션 로그가
+    // 정리돼도 m_watcher 와 m_watchedFiles 에 경로가 영원히 남아, 장기 실행 시
+    // 감시 목록이 단조 증가했다. QFileSystemWatcher 는 경로마다 OS 핸들을
+    // 소비하므로 한도를 넘기면 '새' 파일 감시가 조용히 실패하기 시작한다.
+    // 이제 존재하는 경로 집합과 양방향으로 동기화한다.
+    auto sync = [this](const QStringList &watched, const QSet<QString> &want) {
+        QStringList stale;
+        for (const QString &path : watched) {
+            if (!want.contains(path))
+                stale.append(path);
         }
-    }
+        if (!stale.isEmpty())
+            m_watcher->removePaths(stale);
+
+        const QSet<QString> current(watched.constBegin(), watched.constEnd());
+        QStringList fresh;
+        for (const QString &path : want) {
+            if (!current.contains(path))
+                fresh.append(path);
+        }
+        if (!fresh.isEmpty())
+            m_watcher->addPaths(fresh);
+    };
+
+    sync(m_watcher->directories(), wantDirs);
+    sync(m_watcher->files(),       wantFiles);
 }
 
 // ── 백그라운드 스캔 ───────────────────────────────────────────────────────────
@@ -153,9 +191,10 @@ void UsageScanner::requestScan()
     m_scanPending = true;
 
     // 멤버 변수를 람다에 복사 (스레드 안전)
-    const QDateTime hint5h     = m_lastKnownReset5h;
-    const QDateTime hint7d     = m_lastKnownReset7d;
-    const QDateTime deltaStart = m_deltaStart;
+    const QDateTime      hint5h      = m_lastKnownReset5h;
+    const QDateTime      hint7d      = m_lastKnownReset7d;
+    const QDateTime      deltaStart  = m_deltaStart;
+    const CalibrationSet calibration = m_calibration;
 
     auto *watcher = new QFutureWatcher<ScanResult>(this);
 
@@ -164,7 +203,7 @@ void UsageScanner::requestScan()
         const ScanResult result = watcher->result();
         watcher->deleteLater();
 
-        emit localUsageUpdated(result.full, result.delta, result.hasDelta);
+        emit localUsageUpdated(result);
 
         if (m_rescanQueued) {
             m_rescanQueued = false;
@@ -172,8 +211,8 @@ void UsageScanner::requestScan()
         }
     });
 
-    watcher->setFuture(QtConcurrent::run([hint5h, hint7d, deltaStart]() {
-        return scanLocal(deltaStart, hint5h, hint7d);
+    watcher->setFuture(QtConcurrent::run([hint5h, hint7d, deltaStart, calibration]() {
+        return scanLocal(deltaStart, hint5h, hint7d, calibration);
     }));
 }
 
@@ -223,13 +262,36 @@ QDateTime UsageScanner::earliestRelevant(const QDateTime &nowUtc,
     return earliest;
 }
 
+double UsageScanner::costOf(const TokenRecord &r)
+{
+    ModelPricing p = getPricingForModel(r.model);
+    if (r.fastMode && p.fastMultiplier > 1.0) {
+        p.inputRate        *= p.fastMultiplier;
+        p.outputRate       *= p.fastMultiplier;
+        p.cacheWriteRate   *= p.fastMultiplier;
+        p.cacheWrite1hRate *= p.fastMultiplier;
+        p.cacheReadRate    *= p.fastMultiplier;
+    }
+
+    // 1시간 캐시는 5분 캐시의 1.6배다. Claude Code 는 1시간 캐시를 주로 쓰므로
+    // 둘을 뭉뚱그리면 캐시 쓰기 비용이 구조적으로 과소 계산된다.
+    const qint64 write1h = qBound<qint64>(0, r.cacheWrite1h, r.cacheWrite);
+    const qint64 write5m = r.cacheWrite - write1h;
+
+    return (r.input     * p.inputRate
+          + r.output    * p.outputRate
+          + write5m     * p.cacheWriteRate
+          + write1h     * p.cacheWrite1hRate
+          + r.cacheRead * p.cacheReadRate) / 1'000'000.0
+         + r.webSearches * WEB_SEARCH_COST;
+}
+
 ScanResult UsageScanner::aggregate(const QVector<TokenRecord> &records,
                                    const QDateTime &nowUtc,
                                    const QDateTime &deltaStartUtc,
                                    const QDateTime &reset5h,
                                    const QDateTime &reset7d,
-                                   qint64 limit5h,
-                                   qint64 limit7d)
+                                   const CalibrationSet &calibration)
 {
     const bool      hasDelta   = deltaStartUtc.isValid();
     const QDateTime deltaStart = hasDelta ? deltaStartUtc.toUTC() : QDateTime();
@@ -256,33 +318,46 @@ ScanResult UsageScanner::aggregate(const QVector<TokenRecord> &records,
 
     const QDateTime billing = billingCycleStart(nowUtc);
 
-    qint64 full5hTok = 0, full7dTok = 0, delta5hTok = 0, delta7dTok = 0;
+    // 할당량은 더 이상 "가중 토큰 합 ÷ 하드코딩 한도"로 구하지 않는다.
+    // 계열·종류별로 토큰을 나눠 담고(특징벡터), 학습된 계수로 비율을 만든다.
+    UsageFeatures full5h, full7d, full7dSonnet;
+    UsageFeatures delta5h, delta7d, delta7dSonnet;
     double fullCost = 0.0, deltaCost = 0.0;
+
+    auto accumulate = [](UsageFeatures &f, const TokenRecord &r, Calib::Family fam) {
+        f.add(fam, Calib::Input,      r.input);
+        f.add(fam, Calib::Output,     r.output);
+        f.add(fam, Calib::CacheWrite, r.cacheWrite);
+        f.add(fam, Calib::CacheRead,  r.cacheRead);
+    };
 
     // 파일을 두 번 읽는 대신 한 벌의 레코드로 full/delta 를 동시에 누산한다.
     for (const TokenRecord &r : records) {
-        const qint64 tokens = r.input + r.output + r.cacheWrite
-                            + qRound64(r.cacheRead * CACHE_READ_WEIGHT);
-        const ModelPricing p = getPricingForModel(r.model);
-        const double cost = (r.input      * p.inputRate
-                           + r.output     * p.outputRate
-                           + r.cacheWrite * p.cacheWriteRate
-                           + r.cacheRead  * p.cacheReadRate) / 1'000'000.0;
+        const Calib::Family fam = Calib::familyOf(r.model);
+        const bool isSonnet     = (fam == Calib::Sonnet);
+        const double cost       = costOf(r);
 
-        if (r.ts >= full5hStart)  full5hTok += tokens;
-        if (r.ts >= full7dStart)  full7dTok += tokens;
-        if (r.ts >= billing)      fullCost  += cost;
+        if (r.ts >= full5hStart) accumulate(full5h, r, fam);
+        if (r.ts >= full7dStart) {
+            accumulate(full7d, r, fam);
+            if (isSonnet) accumulate(full7dSonnet, r, fam);
+        }
+        if (r.ts >= billing) fullCost += cost;
 
         if (hasDelta) {
-            if (r.ts >= delta5hStart) delta5hTok += tokens;
-            if (r.ts >= delta7dStart) delta7dTok += tokens;
+            if (r.ts >= delta5hStart) accumulate(delta5h, r, fam);
+            if (r.ts >= delta7dStart) {
+                accumulate(delta7d, r, fam);
+                if (isSonnet) accumulate(delta7dSonnet, r, fam);
+            }
             // 추가 크레딧은 월 단위라 5h 리셋과 무관하게 deltaStart 를 기준으로 한다.
             // delta5hStart 를 쓰면 5h 리셋이 낄 때마다 그 사이 비용이 통째로 사라진다.
             if (r.ts >= deltaStart && r.ts >= billing) deltaCost += cost;
         }
     }
 
-    auto build = [&](qint64 tok5h, qint64 tok7d, double credits) {
+    auto build = [&](const UsageFeatures &f5h, const UsageFeatures &f7d,
+                     const UsageFeatures &f7dSonnet, double credits) {
         UsageData d;
         d.fromApi   = false;
         d.fetchedAt = QDateTime::currentDateTime();
@@ -293,31 +368,32 @@ ScanResult UsageScanner::aggregate(const QVector<TokenRecord> &records,
         d.extraUsage.enabled     = false;
         d.extraUsage.usedCredits = credits;
 
-        if (tok5h > 0 || limit5h > 0) {
-            d.fiveHour.rawTokens   = tok5h;
-            d.fiveHour.limitTokens = limit5h;
-            d.fiveHour.resetsAt    = next5h;
-            d.fiveHour.valid       = true;
-            if (limit5h > 0)
-                d.fiveHour.utilization =
-                    qMin(1.0, static_cast<double>(tok5h) / static_cast<double>(limit5h));
-        }
-        if (tok7d > 0 || limit7d > 0) {
-            d.sevenDay.rawTokens   = tok7d;
-            d.sevenDay.limitTokens = limit7d;
-            d.sevenDay.resetsAt    = next7d;
-            d.sevenDay.valid       = true;
-            if (limit7d > 0)
-                d.sevenDay.utilization =
-                    qMin(1.0, static_cast<double>(tok7d) / static_cast<double>(limit7d));
-        }
+        auto fill = [](QuotaInfo &q, const UsageFeatures &f,
+                       const QuotaCoefficients &c, const QDateTime &resetsAt) {
+            if (!c.isValid() && f.isEmpty())
+                return;                       // 계수도 없고 토큰도 없으면 표시할 게 없다
+            q.rawTokens   = f.total();        // 표시용이 아니라 디버그·병합 참고용
+            q.limitTokens = 0;                // 한도 개념은 계수에 흡수됐다
+            q.resetsAt    = resetsAt;
+            q.valid       = true;
+            q.utilization = qBound(0.0, c.predict(f), 1.0);
+        };
+
+        fill(d.fiveHour,       f5h,       calibration.fiveHour,       next5h);
+        fill(d.sevenDay,       f7d,       calibration.sevenDay,       next7d);
+        fill(d.sevenDaySonnet, f7dSonnet, calibration.sevenDaySonnet, next7d);
         return d;
     };
 
     ScanResult result;
-    result.hasDelta = hasDelta;
-    result.full     = build(full5hTok, full7dTok, fullCost);
-    result.delta    = hasDelta ? build(delta5hTok, delta7dTok, deltaCost) : result.full;
+    result.hasDelta             = hasDelta;
+    result.full                 = build(full5h, full7d, full7dSonnet, fullCost);
+    result.delta                = hasDelta
+        ? build(delta5h, delta7d, delta7dSonnet, deltaCost)
+        : result.full;
+    result.full5hFeatures       = full5h;
+    result.full7dFeatures       = full7d;
+    result.full7dSonnetFeatures = full7dSonnet;
     return result;
 }
 
@@ -387,11 +463,32 @@ QVector<TokenRecord> UsageScanner::readRecords(const QString &projectsDir,
             if (earliestUtc.isValid() && ts < earliestUtc)
                 continue;
 
-            records.append({ts, model,
-                            usage["input_tokens"].toVariant().toLongLong(),
-                            usage["output_tokens"].toVariant().toLongLong(),
-                            usage["cache_creation_input_tokens"].toVariant().toLongLong(),
-                            usage["cache_read_input_tokens"].toVariant().toLongLong()});
+            // ⚠ usage.iterations[] 는 폴백/재시도 등 시도별 내역이며 같은 토큰
+            // 필드를 그대로 반복한다(실제 로그에서 input_tokens 가 정확히 2배로
+            // 잡힌다). usage 최상위 값이 이미 그 시도들의 합계이므로
+            // iterations 를 재귀 합산하면 즉시 2배 이상으로 부풀어 오른다.
+            // 여기서는 반드시 최상위 값만 읽는다.
+            TokenRecord rec;
+            rec.ts         = ts;
+            rec.model      = model;
+            rec.input      = usage["input_tokens"].toVariant().toLongLong();
+            rec.output     = usage["output_tokens"].toVariant().toLongLong();
+            rec.cacheWrite = usage["cache_creation_input_tokens"].toVariant().toLongLong();
+            rec.cacheRead  = usage["cache_read_input_tokens"].toVariant().toLongLong();
+
+            // 캐시 쓰기 요율은 5분(x1.25)과 1시간(x2)이 다르다.
+            // cache_creation 이 있으면 1시간분을 분리하고, 없는 옛 로그는
+            // cacheWrite1h == 0 이라 전량 5분 요율로 계산된다.
+            const QJsonObject cacheCreation = usage["cache_creation"].toObject();
+            rec.cacheWrite1h =
+                cacheCreation["ephemeral_1h_input_tokens"].toVariant().toLongLong();
+
+            rec.webSearches =
+                usage["server_tool_use"].toObject()["web_search_requests"]
+                    .toVariant().toLongLong();
+            rec.fastMode = (usage["speed"].toString() == "fast");
+
+            records.append(rec);
         }
     }
 
@@ -404,7 +501,8 @@ QVector<TokenRecord> UsageScanner::readRecords(const QString &projectsDir,
 
 ScanResult UsageScanner::scanLocal(const QDateTime &deltaStartUtc,
                                    const QDateTime &reset5h,
-                                   const QDateTime &reset7d)
+                                   const QDateTime &reset7d,
+                                   const CalibrationSet &calibration)
 {
     const QDateTime now      = QDateTime::currentDateTimeUtc();
     const QDateTime earliest = earliestRelevant(now, deltaStartUtc, reset7d);
@@ -413,21 +511,18 @@ ScanResult UsageScanner::scanLocal(const QDateTime &deltaStartUtc,
     const QVector<TokenRecord> records =
         readRecords(CredentialsReader::claudeDir() + "/projects", earliest, &recentModel);
 
-    const qint64 limit5h = planLimit5h();
-    const qint64 limit7d = planLimit7d();
-
     ScanResult result = aggregate(records, now, deltaStartUtc, reset5h, reset7d,
-                                  limit5h, limit7d);
+                                  calibration);
     result.full.recentModel  = recentModel;
     result.delta.recentModel = recentModel;
 
     qDebug() << "[UsageScanner] plan=" << CredentialsReader::subscriptionType()
              << "records=" << records.size()
-             << "full5h=" << result.full.fiveHour.rawTokens
-             << "full7d=" << result.full.sevenDay.rawTokens
-             << "delta5h=" << result.delta.fiveHour.rawTokens
-             << "limit5h=" << limit5h
-             << "limit7d=" << limit7d
+             << "full5h%=" << qRound(result.full.fiveHour.utilization * 100.0)
+             << "full7d%=" << qRound(result.full.sevenDay.utilization * 100.0)
+             << "delta5h%=" << qRound(result.delta.fiveHour.utilization * 100.0)
+             << "calibSamples5h=" << calibration.fiveHour.samples
+             << "calibSamples7d=" << calibration.sevenDay.samples
              << "monthCost=" << result.full.extraUsage.usedCredits
              << "deltaCost=" << result.delta.extraUsage.usedCredits;
 
@@ -463,6 +558,12 @@ static const PricingTree &pricingTree()
                 p.outputRate     = rateObj["output_rate"].toDouble();
                 p.cacheWriteRate = rateObj["cache_write_rate"].toDouble();
                 p.cacheReadRate  = rateObj["cache_read_rate"].toDouble();
+                // 1시간 캐시 요율이 없는 옛 파일이면 5분 요율로 폴백한다
+                // (예전과 같은 동작 = 과소 계산이지만 크래시보다는 낫다).
+                p.cacheWrite1hRate =
+                    rateObj["cache_write_1h_rate"].toDouble(p.cacheWriteRate);
+                // 값이 없으면 1.0 = fast mode 미지원 모델.
+                p.fastMultiplier = rateObj["fast_multiplier"].toDouble(1.0);
                 versionMap.insert(versionIt.key(), p);
             }
             t.insert(familyIt.key(), versionMap);
@@ -499,10 +600,11 @@ ModelPricing UsageScanner::getPricingForModel(const QString &modelName)
 {
     // 요율 파일을 못 읽었을 때의 최종 폴백 (Sonnet 5 기준)
     ModelPricing defaultPricing;
-    defaultPricing.inputRate      = 3.00;
-    defaultPricing.outputRate     = 15.00;
-    defaultPricing.cacheWriteRate = 3.75;
-    defaultPricing.cacheReadRate  = 0.30;
+    defaultPricing.inputRate        = 3.00;
+    defaultPricing.outputRate       = 15.00;
+    defaultPricing.cacheWriteRate   = 3.75;
+    defaultPricing.cacheWrite1hRate = 6.00;
+    defaultPricing.cacheReadRate    = 0.30;
 
     const PricingTree &tree = pricingTree();
     const QString lowerName = modelName.toLower();

@@ -9,6 +9,7 @@ add_executable(tst_usagelogic
     tst_usagelogic.cpp
     ${CMAKE_SOURCE_DIR}/usagescanner.cpp
     ${CMAKE_SOURCE_DIR}/usagemerge.cpp
+    ${CMAKE_SOURCE_DIR}/usagecalibrator.cpp
     ${CMAKE_SOURCE_DIR}/usageapiclient.cpp
     ${CMAKE_SOURCE_DIR}/credentialsreader.cpp
     ${CMAKE_SOURCE_DIR}/resources.qrc      # getPricingForModel 이 읽는 model_pricing.json
