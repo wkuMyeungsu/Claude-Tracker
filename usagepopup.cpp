@@ -387,7 +387,7 @@ void UsagePopup::updateStatusLine()
         text = "🔴 연결 오류";
         break;
     }
-    m_wasOpacityIdleBeforeDrag = false;
+    m_statusLine->setText(text);
 }
 
 void UsagePopup::paintEvent(QPaintEvent *event)
