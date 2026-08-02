@@ -125,13 +125,20 @@ if(QT_VERSION_MAJOR EQUAL 6)
     # windeployqt 로 Qt 런타임 DLL 과 플러그인을 함께 설치한다.
     # 이게 없으면 exe 한 개만 패키징돼 Qt 미설치 PC 에서 실행 불가이고,
     # styles/qmodernwindowsstyle.dll 누락으로 UI 가 각지게 렌더링된다.
-    qt_generate_deploy_app_script(
-        TARGET ClaudeTray
-        OUTPUT_SCRIPT QT_DEPLOY_SCRIPT
-        NO_UNSUPPORTED_PLATFORM_ERROR
-        NO_TRANSLATIONS
-    )
-    install(SCRIPT ${QT_DEPLOY_SCRIPT})
+    #
+    # windeployqt/macdeployqt 가 있는 플랫폼에서만 부른다. Linux 에는 대응 도구가
+    # 없어 어차피 할 일이 없고, 배포판 Qt(예: Ubuntu 24.04 의 6.4)는
+    # OUTPUT_SCRIPT/NO_TRANSLATIONS 인자를 아직 몰라 configure 단계에서
+    # "Unexpected arguments" 로 실패한다. CI 의 Linux 잡은 빌드·테스트만 하면 된다.
+    if(WIN32 OR APPLE)
+        qt_generate_deploy_app_script(
+            TARGET ClaudeTray
+            OUTPUT_SCRIPT QT_DEPLOY_SCRIPT
+            NO_UNSUPPORTED_PLATFORM_ERROR
+            NO_TRANSLATIONS
+        )
+        install(SCRIPT ${QT_DEPLOY_SCRIPT})
+    endif()
 endif()
 
 # windeployqt 는 Qt6*.dll 과 플러그인만 복사하고 MinGW/서드파티 런타임
