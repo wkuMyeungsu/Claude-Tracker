@@ -54,10 +54,38 @@ struct QuotaCoefficients {
     bool   isValid() const;  // 계수가 하나라도 양수인가
 };
 
+// 추가 결제 크레딧 보정 계수.
+//
+// 5h/7d 와 달리 계열·종류별 벡터를 두지 않는다. 크레딧 추정치는 이미
+// ModelPricingTable 이 모델·캐시 티어·fast 모드까지 반영해 '달러'로 계산한
+// 값이라, 남는 미지수는 그 달러가 실제 크레딧으로 환산되는 '배율' 하나다.
+//
+//     크레딧 = API 실측값 + (로컬 델타비용 × 청구비율) × k
+//
+// k 가 흡수하는 오차는 두 갈래다.
+//   (1) 요율표와 Anthropic 실제 과금의 차이(반올림·미공개 할증)
+//   (2) UsageMerger::chargeableRatio 의 선형 근사 오차
+// 둘 다 증분에 곱으로 붙으므로 스칼라 하나로 맞출 수 있다.
+//
+// 스칼라를 고른 실질적인 이유가 하나 더 있다: 크레딧 관측은 플랜 한도를 다
+// 쓴 뒤에만 생겨서 표본이 매우 귀하다. 16개짜리 벡터는 수렴할 기회가 없다.
+struct CreditCoefficient {
+    double k       = 1.0;    // 1.0 = 요율표 그대로 (prior)
+    int    samples = 0;
+
+    // QuotaCoefficients 와 같은 자가 복구용. 다만 이쪽은 증분 크기가 관측마다
+    // 크게 달라서(몇 센트 ~ 몇 달러) 절대 오차 대신 '상대 오차'를 누적한다.
+    double errLearned = 0.0;
+    double errPrior   = 0.0;
+
+    bool isValid() const;
+};
+
 struct CalibrationSet {
     QuotaCoefficients fiveHour;
     QuotaCoefficients sevenDay;
     QuotaCoefficients sevenDaySonnet;
+    CreditCoefficient credit;
 };
 
 namespace QuotaCalibrator {
@@ -82,6 +110,13 @@ CalibrationSet    priorsFor(qint64 limit5h, qint64 limit7d);
 bool observe(QuotaCoefficients &coeff, const UsageFeatures &features,
              double observedUtil, const QuotaCoefficients &prior,
              double *residualOut = nullptr);
+
+// 크레딧 관측 1건으로 배율을 갱신한다.
+//   rawIncrement    : 보정 '전' 예측 증가분 (델타비용 × 청구비율, 달러)
+//   actualIncrement : 같은 구간의 API 실측 증가분 (달러)
+// 신호가 없는 관측(증분이 반올림 잡음 수준, 음수)은 무시하고 false 를 돌려준다.
+bool observeCredit(CreditCoefficient &coeff, double rawIncrement,
+                   double actualIncrement, double *residualOut = nullptr);
 
 // QSettings 영속화 (키 접두사별로 저장).
 void saveTo(const QString &group, const CalibrationSet &set);

@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  MSI 설치 중 실행 중인 ClaudeTray 를 닫는다.
+
+  이게 없으면 앱이 떠 있는 상태로 설치할 때 Windows Installer 가
+  "파일이 사용 중입니다" 대화상자를 띄우거나 재부팅을 요구하고,
+  최악의 경우 새 파일이 다음 부팅까지 적용되지 않는다.
+
+  속성 선택 근거 (WiX 3.14 util.xsd 확인):
+    EndSessionMessage  WM_QUERYENDSESSION/WM_ENDSESSION 을 보낸다. Qt 는 이걸
+                       세션 종료로 처리해 정상 종료하므로 가장 얌전한 경로다.
+    CloseMessage       WM_CLOSE. 이 앱은 setQuitOnLastWindowClosed(false) 라
+                       창을 닫아도 프로세스가 안 죽으므로 단독으로는 부족하다.
+                       그래서 EndSessionMessage 와 함께 둔다.
+    TerminateProcess   위 둘로도 안 죽으면 강제 종료. 저장이 필요한 상태가
+                       메모리에 남지 않는 구조라(보정값·리셋 시각은 관측 즉시
+                       QSettings 에 동기 저장) 안전하다.
+    RebootPrompt="no"  기본값이 "yes" 이고, TerminateProcess 와 상호 배타다.
+                       재부팅을 요구하지 않는 쪽을 택했다.
+
+  Description 는 영문으로 둔다. MSI 데이터베이스 코드 페이지가 1252 라
+  한글을 넣으면 light.exe 가 LGHT0311 로 실패하고, 설치 관리자 UI 자체가
+  영문(WixUI en-us)이라 한글 한 줄만 섞이면 오히려 어색하다.
+-->
+<CPackWiXPatch>
+  <CPackWiXFragment Id="#PRODUCT">
+    <util:CloseApplication
+        Id="CloseClaudeTray"
+        Target="ClaudeTray.exe"
+        Description="ClaudeTray is running and will be closed to continue setup."
+        CloseMessage="yes"
+        EndSessionMessage="yes"
+        RebootPrompt="no"
+        TerminateProcess="0"/>
+  </CPackWiXFragment>
+</CPackWiXPatch>

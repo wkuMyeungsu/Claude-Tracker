@@ -9,6 +9,7 @@
 #include <QTemporaryDir>
 #include <QTimeZone>
 
+#include "HookBridge.h"
 #include "UsageApiClient.h"
 #include "QuotaCalibrator.h"
 #include "UsageMerger.h"
@@ -106,6 +107,11 @@ private slots:
     void readRecords_parsesCacheCreationAndSpeed();
     void readRecords_ignoresIterationsArray();
 
+    // ── HookBridge ───────────────────────────────────────────────────────────
+    void hooks_installKeepsForeignSettingsAndHooks();
+    void hooks_installIsIdempotent();
+    void hooks_uninstallRestoresOriginal();
+
     // ── QuotaCalibrator ──────────────────────────────────────────────────────
     void calibrator_priorMatchesLegacyFormula();
     void calibrator_convergesTowardObservedUtilization();
@@ -116,6 +122,13 @@ private slots:
     void calibrator_neverPredictsOverFullQuota();
     void calibrator_revertsWhenWorseThanPrior();
     void calibrator_priorWeightsFamiliesByPrice();
+
+    // ── 크레딧 보정 ──────────────────────────────────────────────────────────
+    void creditCalib_convergesTowardObservedIncrement();
+    void creditCalib_learnsDownFasterThanUp();
+    void creditCalib_ignoresNoiseSizedIncrements();
+    void creditCalib_revertsWhenWorseThanPrior();
+    void creditCalib_scalesOnlyTheIncrementNotTheApiBase();
 
     // ── UsageMerger ───────────────────────────────────────────────────────────
     void merge_addsDeltaOnTopOfApi();
@@ -549,6 +562,110 @@ void TestUsageLogic::readRecords_ignoresIterationsArray()
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// 사용자의 ~/.claude/settings.json 을 통째로 다시 쓰는 코드라, 남의 설정과
+// 남의 훅이 살아남는지를 반드시 지켜야 한다.
+
+namespace {
+
+// 이미 다른 훅이 등록돼 있는, 흔한 형태의 settings.json
+QJsonObject foreignSettings()
+{
+    return QJsonDocument::fromJson(R"({
+        "model": "opus",
+        "tui": "fullscreen",
+        "hooks": {
+            "PreToolUse": [
+                { "matcher": "Bash",
+                  "hooks": [ { "type": "command", "command": "guard.sh" } ] }
+            ],
+            "Stop": [
+                { "hooks": [ { "type": "command", "command": "notify.sh" } ] }
+            ]
+        }
+    })").object();
+}
+
+int handlerCount(const QJsonObject &root, const QString &event)
+{
+    int n = 0;
+    for (const QJsonValue &g : root.value("hooks").toObject().value(event).toArray())
+        n += g.toObject().value("hooks").toArray().size();
+    return n;
+}
+
+bool hasOurHandler(const QJsonObject &root, const QString &event, const QString &exe)
+{
+    for (const QJsonValue &g : root.value("hooks").toObject().value(event).toArray()) {
+        for (const QJsonValue &h : g.toObject().value("hooks").toArray()) {
+            const QJsonObject o = h.toObject();
+            if (o.value("command").toString() == exe
+                && o.value("args").toArray().contains(QJsonValue("--claude-tracker-hook")))
+                return true;
+        }
+    }
+    return false;
+}
+
+} // namespace
+
+void TestUsageLogic::hooks_installKeepsForeignSettingsAndHooks()
+{
+    const QString exe = "C:/apps/ClaudeTray.exe";
+    const QJsonObject out = HookBridge::applyHooksToSettings(foreignSettings(), true, exe);
+
+    // 훅과 무관한 최상위 키는 그대로다.
+    QCOMPARE(out.value("model").toString(), QString("opus"));
+    QCOMPARE(out.value("tui").toString(),   QString("fullscreen"));
+
+    // 우리가 건드리지 않는 이벤트의 남의 훅은 손대지 않는다.
+    QCOMPARE(handlerCount(out, "PreToolUse"), 1);
+
+    // 우리도 쓰는 이벤트라면 남의 훅 옆에 나란히 들어간다.
+    QCOMPARE(handlerCount(out, "Stop"), 2);
+    QVERIFY(hasOurHandler(out, "Stop", exe));
+
+    // 승인 대기를 알려주는 이벤트가 실제로 등록돼야 한다.
+    QVERIFY(hasOurHandler(out, "PermissionRequest", exe));
+}
+
+void TestUsageLogic::hooks_installIsIdempotent()
+{
+    const QString exe = "C:/apps/ClaudeTray.exe";
+    const QJsonObject once  = HookBridge::applyHooksToSettings(foreignSettings(), true, exe);
+    const QJsonObject twice = HookBridge::applyHooksToSettings(once, true, exe);
+
+    QCOMPARE(twice, once);
+    QCOMPARE(handlerCount(twice, "Stop"), 2);
+
+    // 경로가 바뀐 재설치는 옛 항목을 남기지 않고 갈아끼운다.
+    const QString moved = "D:/apps/ClaudeTray.exe";
+    const QJsonObject relocated = HookBridge::applyHooksToSettings(once, true, moved);
+    QCOMPARE(handlerCount(relocated, "PermissionRequest"), 1);
+    QVERIFY(hasOurHandler(relocated, "PermissionRequest", moved));
+    QVERIFY(!hasOurHandler(relocated, "PermissionRequest", exe));
+}
+
+void TestUsageLogic::hooks_uninstallRestoresOriginal()
+{
+    const QString exe = "C:/apps/ClaudeTray.exe";
+    const QJsonObject original = foreignSettings();
+
+    const QJsonObject installed = HookBridge::applyHooksToSettings(original, true, exe);
+    QVERIFY(installed != original);
+
+    const QJsonObject removed = HookBridge::applyHooksToSettings(installed, false, exe);
+    QCOMPARE(removed, original);
+
+    // 훅이 하나도 없던 설정이라면 hooks 키 자체를 남기지 않는다.
+    QJsonObject bare;
+    bare["model"] = "opus";
+    const QJsonObject roundTrip = HookBridge::applyHooksToSettings(
+        HookBridge::applyHooksToSettings(bare, true, exe), false, exe);
+    QCOMPARE(roundTrip, bare);
+    QVERIFY(!roundTrip.contains("hooks"));
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 
 void TestUsageLogic::calibrator_priorMatchesLegacyFormula()
 {
@@ -734,6 +851,121 @@ void TestUsageLogic::calibrator_revertsWhenWorseThanPrior()
     QCOMPARE(good.samples, 300);          // 한 번도 되돌아가지 않음
     QVERIFY2(qAbs(good.predict(f) - truth) < 0.005,
              qPrintable(QString("predict=%1 truth=%2").arg(good.predict(f)).arg(truth)));
+}
+
+// ── 크레딧 보정 ──────────────────────────────────────────────────────────────
+// 5h/7d 와 달리 관측이 '증분 대 증분'이다. 요율표로 계산한 달러가 실제 크레딧
+// 차감액과 어긋나는 배율 하나를 학습한다.
+
+void TestUsageLogic::creditCalib_convergesTowardObservedIncrement()
+{
+    // 실제 차감액이 요율표 계산의 1.2 배인 사용자.
+    CreditCoefficient c;
+    QCOMPARE(c.k, 1.0);                       // prior = 요율표 그대로
+
+    const double raw = 2.00;                  // 로컬 추정 증분 $2.00
+    const double truth = raw * 1.2;           // 실제 $2.40
+
+    for (int i = 0; i < 200; ++i)
+        QVERIFY(QuotaCalibrator::observeCredit(c, raw, truth));
+
+    QVERIFY2(qAbs(c.k - 1.2) < 0.01,
+             qPrintable(QString("k=%1, 기대 1.2").arg(c.k)));
+    QCOMPARE(c.samples, 200);
+}
+
+void TestUsageLogic::creditCalib_learnsDownFasterThanUp()
+{
+    // 크레딧도 claude.ai 등 외부 사용분이 API 값에만 얹힌다. 따라서 '실측이 더
+    // 크다'(error>0)는 k 가 작아서인지 외부 사용 때문인지 구별할 수 없는
+    // 오염된 방향이고, '실측이 더 작다'는 외부 사용으로는 만들 수 없는 증거다.
+    // 오차 크기를 ±0.50 으로 대칭으로 맞춰야 '방향'만 비교하는 시험이 된다.
+    const double raw = 1.00;
+
+    CreditCoefficient up;                     // 실측 +0.50 → 올려야 함(오염 방향)
+    QuotaCalibrator::observeCredit(up, raw, 1.50);
+
+    CreditCoefficient down;                   // 실측 −0.50 → 내려야 함(깨끗)
+    QuotaCalibrator::observeCredit(down, raw, 0.50);
+
+    const double movedUp   = up.k - 1.0;      // +
+    const double movedDown = 1.0 - down.k;    // +
+    QVERIFY(movedUp > 0.0);
+    QVERIFY(movedDown > 0.0);
+
+    // 같은 크기(1.0)의 오차인데 내려가는 쪽이 확실히 빠르다.
+    QVERIFY2(movedDown > movedUp * 3.0,
+             qPrintable(QString("down=%1 up=%2").arg(movedDown).arg(movedUp)));
+}
+
+void TestUsageLogic::creditCalib_ignoresNoiseSizedIncrements()
+{
+    CreditCoefficient c;
+
+    // 몇 센트짜리 증분은 API 의 센트 반올림이 신호보다 크다.
+    QVERIFY(!QuotaCalibrator::observeCredit(c, 0.01, 0.03));
+    QVERIFY(!QuotaCalibrator::observeCredit(c, 0.00, 1.00));
+    // 음수 증분은 월 리셋·API 정정이라 학습 대상이 아니다.
+    QVERIFY(!QuotaCalibrator::observeCredit(c, 1.00, -0.50));
+
+    QCOMPARE(c.samples, 0);
+    QCOMPARE(c.k, 1.0);
+}
+
+void TestUsageLogic::creditCalib_revertsWhenWorseThanPrior()
+{
+    // 저장분이 현실과 어긋나 있으면(예: 요율표가 갱신돼 이미 정확해졌는데
+    // 옛 배율이 남은 경우) 요율표 그대로보다 못 맞히므로 되돌려야 한다.
+    CreditCoefficient stale;
+    stale.k       = 4.0;
+    stale.samples = 100;
+
+    const double raw = 1.50;
+    bool reverted = false;
+    for (int i = 0; i < 40; ++i) {
+        QuotaCalibrator::observeCredit(stale, raw, raw);   // 참값 = 요율표 그대로
+        if (stale.samples == 0) { reverted = true; break; }
+    }
+    QVERIFY2(reverted, "prior 가 더 잘 맞히는데도 되돌아가지 않았다");
+    QCOMPARE(stale.k, 1.0);
+
+    // 반대로 학습이 실제로 도움이 되면 되돌리지 않는다.
+    CreditCoefficient good;
+    for (int i = 0; i < 300; ++i)
+        QuotaCalibrator::observeCredit(good, raw, raw * 1.35);
+    QCOMPARE(good.samples, 300);
+    QVERIFY(qAbs(good.k - 1.35) < 0.01);
+}
+
+void TestUsageLogic::creditCalib_scalesOnlyTheIncrementNotTheApiBase()
+{
+    // API 실측 베이스는 이미 정확하다. 거기에 배율을 먹이면 맞는 값을 틀리게
+    // 만든다. 배율은 '마지막 응답 이후의 증분'에만 붙어야 한다.
+    UsageData api;
+    api.fetchedAt = QDateTime::currentDateTimeUtc();
+    api.fiveHour  = { 1.0, api.fetchedAt.addSecs(3600), 0, 0, true };
+    api.sevenDay  = { 1.0, api.fetchedAt.addSecs(86400), 0, 0, true };
+    api.extraUsage.enabled      = true;
+    api.extraUsage.limitDollars = 20.0;
+    api.extraUsage.usedCredits  = 10.00;
+
+    // 한도를 이미 채운 뒤의 델타라 전액이 크레딧으로 청구된다. 델타 비율까지
+    // 있어야 chargeableRatioFor 가 (total−1)/delta = 1.0 을 낸다.
+    UsageData delta;
+    delta.fiveHour = { 0.05, QDateTime(), 0, 0, true };
+    delta.extraUsage.usedCredits = 2.00;
+
+    const QDateTime now = api.fetchedAt.addSecs(60);
+
+    const UsageData plain  = UsageMerger::mergeWithLastApi(api, delta, now, 1.0);
+    const UsageData scaled = UsageMerger::mergeWithLastApi(api, delta, now, 1.5);
+
+    QVERIFY(qAbs(plain.extraUsage.usedCredits  - 12.00) < 1e-9);   // 10 + 2×1.0
+    QVERIFY(qAbs(scaled.extraUsage.usedCredits - 13.00) < 1e-9);   // 10 + 2×1.5
+
+    // 배율이 0 이나 비정상이면 무시하고 1.0 처럼 동작한다.
+    const UsageData guarded = UsageMerger::mergeWithLastApi(api, delta, now, 0.0);
+    QVERIFY(qAbs(guarded.extraUsage.usedCredits - 12.00) < 1e-9);
 }
 
 void TestUsageLogic::calibrator_priorWeightsFamiliesByPrice()

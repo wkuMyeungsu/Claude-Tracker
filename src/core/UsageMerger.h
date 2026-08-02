@@ -13,12 +13,15 @@ namespace UsageMerger {
 //   delta   : lastApi.fetchedAt 이후 로컬 JSONL 에서 집계한 증분.
 //             utilization 은 스캐너가 보정 계수로 이미 계산해 둔 값이다.
 //   nowUtc  : 현재 시각 (테스트 주입용)
+//   creditScale : 크레딧 증분에 곱할 학습된 배율 (CreditCoefficient::k).
+//                 1.0 이면 요율표 그대로 — 보정 전과 동일하게 동작한다.
 //
 // 플랜 한도 인자는 사라졌다. 한도는 이제 보정 계수 안에 흡수돼 있어서
 // 여기서는 비율끼리 더하기만 하면 된다.
 UsageData mergeWithLastApi(const UsageData &lastApi,
                            const UsageData &delta,
-                           const QDateTime &nowUtc);
+                           const QDateTime &nowUtc,
+                           double creditScale = 1.0);
 
 // 델타 비용 중 추가 결제 크레딧으로 청구할 비율을 창(5h 또는 7d) 하나 기준으로
 // 구한다. 크레딧은 플랜 한도를 다 쓴 뒤에야 소모되므로, 한도 안이면 0 이다.

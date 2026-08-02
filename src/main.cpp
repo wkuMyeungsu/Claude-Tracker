@@ -1,6 +1,7 @@
 #include <QApplication>
 #include <QSystemTrayIcon>
 #include <QMessageBox>
+#include "HookBridge.h"
 #include "TrayController.h"
 
 #ifdef Q_OS_WIN
@@ -10,6 +11,16 @@
 
 int main(int argc, char *argv[])
 {
+    // Claude Code 훅으로 불려온 경우. 트레이도 창도 띄우지 않고, stdin 으로 온
+    // 이벤트를 상태 파일에 반영한 뒤 즉시 끝낸다. 턴마다 몇 번씩 실행되므로
+    // QApplication(GUI 초기화)을 만들지 않는 것이 중요하다.
+    for (int i = 1; i < argc; ++i) {
+        if (qstrcmp(argv[i], "--claude-tracker-hook") == 0) {
+            QCoreApplication app(argc, argv);
+            return HookBridge::runHookMode();
+        }
+    }
+
 #ifdef Q_OS_WIN
     // 빌드마다 "실행 중입니다" 알림이 반복되지 않도록 앱 ID 고정.
     //

@@ -55,6 +55,10 @@ constexpr double FAMILY_WEIGHT[Calib::FamilyCount] = {
 constexpr double MIN_OBSERVABLE_UTIL = 0.005;
 constexpr double MAX_OBSERVABLE_UTIL = 0.98;
 
+// 크레딧 증분이 이보다 작으면 관측으로 쓰지 않는다. API 는 센트 단위로
+// 반올림해 주므로, 몇 센트짜리 증분에서는 반올림 오차가 신호보다 크다.
+constexpr double MIN_CREDIT_INCREMENT = 0.05;
+
 const char *FAMILY_KEYS[Calib::FamilyCount] = { "opus", "sonnet", "haiku", "other" };
 const char *KIND_KEYS[Calib::KindCount]     = { "in", "out", "cw", "cr" };
 
@@ -114,6 +118,13 @@ bool QuotaCoefficients::isValid() const
             if (c[i][k] > 0.0)
                 return true;
     return false;
+}
+
+// ── CreditCoefficient ────────────────────────────────────────────────────────
+
+bool CreditCoefficient::isValid() const
+{
+    return k > 0.0 && qIsFinite(k);
 }
 
 // ── QuotaCalibrator ──────────────────────────────────────────────────────────
@@ -229,6 +240,61 @@ bool observe(QuotaCoefficients &coeff, const UsageFeatures &features,
     return true;
 }
 
+bool observeCredit(CreditCoefficient &coeff, double rawIncrement,
+                   double actualIncrement, double *residualOut)
+{
+    if (residualOut)
+        *residualOut = 0.0;
+
+    // 신호가 없는 관측. 음수 증분은 월 리셋·API 정정이라 학습 대상이 아니다.
+    if (!qIsFinite(rawIncrement) || !qIsFinite(actualIncrement))
+        return false;
+    if (rawIncrement < MIN_CREDIT_INCREMENT || actualIncrement < 0.0)
+        return false;
+    if (!coeff.isValid())
+        coeff.k = 1.0;   // 손상된 상태에서 들어왔으면 prior 로 되돌려 시작한다
+
+    const double error      = actualIncrement - coeff.k * rawIncrement;
+    const double errorPrior = actualIncrement - 1.0 * rawIncrement;
+    if (residualOut)
+        *residualOut = error;
+
+    // 증분 크기가 관측마다 크게 다르므로 상대 오차로 누적한다. 절대 달러로
+    // 재면 큰 증분 한 건이 판정을 독차지한다.
+    const double relErr      = error / rawIncrement;
+    const double relErrPrior = errorPrior / rawIncrement;
+    coeff.errLearned = EWMA_ALPHA * relErr * relErr
+                     + (1.0 - EWMA_ALPHA) * coeff.errLearned;
+    coeff.errPrior   = EWMA_ALPHA * relErrPrior * relErrPrior
+                     + (1.0 - EWMA_ALPHA) * coeff.errPrior;
+
+    // 5h/7d 와 같은 비대칭 학습. 크레딧도 claude.ai 등 외부 표면 사용분이
+    // API 값에만 얹히므로, error > 0 은 'k 가 작아서'인지 '외부 사용 때문'인지
+    // 구별할 수 없는 오염된 방향이다. error < 0 은 외부 사용으로는 만들 수
+    // 없는 깨끗한 증거라 전속으로 내린다.
+    const double rate = (error < 0.0) ? LEARNING_RATE
+                                      : LEARNING_RATE * CONTAMINATED_RATE_FACTOR;
+
+    // 정규화 LMS 의 스칼라 형태: Δk = μ·error·x / x² = μ·error / x
+    coeff.k += rate * error / rawIncrement;
+    if (coeff.k < 0.0)
+        coeff.k = 0.0;   // 비용을 깎는 사용량은 존재하지 않는다
+
+    ++coeff.samples;
+
+    // 자가 복구. 여기서도 상한을 '추측한 배수'로 두지 않는다 — 학습분이
+    // 요율표 그대로(k=1.0)보다 확실히 못 맞히면 그때 되돌린다.
+    if (coeff.samples >= MIN_SAMPLES_BEFORE_JUDGING
+        && coeff.errLearned > coeff.errPrior * WORSE_MARGIN) {
+        const int seen = coeff.samples;
+        coeff = CreditCoefficient{};
+        qWarning() << "[QuotaCalibrator] 크레딧 학습분이 초기값보다 예측이 나빠"
+                   << seen << "건을 버리고 되돌림";
+    }
+
+    return true;
+}
+
 // ── 영속화 ───────────────────────────────────────────────────────────────────
 // QSettings 에 계열/종류별 키를 따로 만들면 키가 48 개로 불어난다.
 // JSON 한 덩어리로 직렬화해 문자열 하나에 넣는다.
@@ -276,6 +342,31 @@ bool fromJson(const QJsonObject &o, QuotaCoefficients &q)
     return true;
 }
 
+QJsonObject creditToJson(const CreditCoefficient &c)
+{
+    QJsonObject o;
+    o["k"]          = c.k;
+    o["samples"]    = c.samples;
+    o["errLearned"] = c.errLearned;
+    o["errPrior"]   = c.errPrior;
+    return o;
+}
+
+bool creditFromJson(const QJsonObject &o, CreditCoefficient &c)
+{
+    if (o.isEmpty())
+        return false;
+    CreditCoefficient loaded;
+    loaded.k          = o["k"].toDouble(-1.0);
+    loaded.samples    = o["samples"].toInt();
+    loaded.errLearned = o["errLearned"].toDouble(0.0);
+    loaded.errPrior   = o["errPrior"].toDouble(0.0);
+    if (!loaded.isValid())
+        return false;    // 손상 — prior(k=1.0)로 간다
+    c = loaded;
+    return true;
+}
+
 } // namespace
 
 void saveTo(const QString &group, const CalibrationSet &set)
@@ -284,6 +375,7 @@ void saveTo(const QString &group, const CalibrationSet &set)
     root["5h"]        = toJson(set.fiveHour);
     root["7d"]        = toJson(set.sevenDay);
     root["7d_sonnet"] = toJson(set.sevenDaySonnet);
+    root["credit"]    = creditToJson(set.credit);
 
     QSettings s("ClaudeTray", "ClaudeTray");
     s.setValue(group, QString::fromUtf8(
@@ -317,6 +409,12 @@ bool loadFrom(const QString &group, CalibrationSet &set, const CalibrationSet &p
         qWarning() << "[QuotaCalibrator] 저장된 보정값" << (3 - restored)
                    << "개 창이 손상돼 초기값으로 되돌림";
     }
+
+    // credit 은 나중에 추가된 항목이라 옛 저장분에는 없다. 없으면 k=1.0 —
+    // 즉 요율표 그대로라, 이 기능이 생기기 전과 동작이 같다.
+    if (creditFromJson(root["credit"].toObject(), set.credit))
+        ++restored;
+
     return restored > 0;
 }
 

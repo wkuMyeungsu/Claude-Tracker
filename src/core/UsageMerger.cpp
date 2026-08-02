@@ -82,7 +82,8 @@ double UsageMerger::chargeableRatio(const UsageData &lastApi, const UsageData &d
 
 UsageData UsageMerger::mergeWithLastApi(const UsageData &lastApi,
                                        const UsageData &delta,
-                                       const QDateTime &nowUtc)
+                                       const QDateTime &nowUtc,
+                                       double creditScale)
 {
     UsageData merged = lastApi;
     merged.fromApi   = false;
@@ -140,8 +141,11 @@ UsageData UsageMerger::mergeWithLastApi(const UsageData &lastApi,
         const double ratio =
             chargeableRatio(lastApi, delta, reset5hOccurred, reset7dOccurred);
 
+        // 학습된 배율은 '증분'에만 곱한다. apiBaseCredits 는 API 실측값이라
+        // 이미 정확하고, 거기에 배율을 먹이면 맞는 값을 틀리게 만든다.
+        const double scale = (creditScale > 0.0 && qIsFinite(creditScale)) ? creditScale : 1.0;
         merged.extraUsage.usedCredits =
-            apiBaseCredits + delta.extraUsage.usedCredits * ratio;
+            apiBaseCredits + delta.extraUsage.usedCredits * ratio * scale;
         if (merged.extraUsage.limitDollars > 0.0) {
             merged.extraUsage.utilization =
                 qMin(1.0, merged.extraUsage.usedCredits / merged.extraUsage.limitDollars);

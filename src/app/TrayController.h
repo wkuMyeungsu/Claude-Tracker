@@ -11,6 +11,8 @@ class QTimer;
 class UsageApiClient;
 class UsageWindow;
 
+namespace HookBridge { class StateWatcher; }
+
 class TrayController : public QObject
 {
     Q_OBJECT
@@ -36,8 +38,11 @@ private:
     UsageData mergeWithLastApi(const UsageData &data) const;
     // 직전 API 정확값과 방금 계산한 로컬 특징벡터를 짝지어 보정 계수를 학습한다.
     void trainCalibration(const ScanResult &result);
+    // 크레딧은 월 누적이라 증분끼리 맞춘다. trainCalibration 과 달리 API 응답이
+    // 도착한 그 순간(덮어쓰기 전)에만 관측을 만들 수 있다.
+    void observeCreditCalibration(const UsageData &fresh);
     void updateTooltip();
-    QIcon makeIcon(double utilization);
+    QIcon makeIcon(double utilization, bool creditActive = false);
     QString formatCountdown(const QDateTime &resetsAt) const;
 
     QSystemTrayIcon *m_tray = nullptr;
@@ -45,6 +50,7 @@ private:
     UsageWindow *m_popup = nullptr;
     UsageApiClient *m_apiClient = nullptr;
     SessionLogWatcher *m_scanner = nullptr;
+    HookBridge::StateWatcher *m_hookWatcher = nullptr;
     UsageData m_current;
     UsageData m_lastApiData;
     CalibrationSet m_calibration;   // 학습된 "토큰당 할당량" 계수

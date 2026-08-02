@@ -1,9 +1,9 @@
 #ifndef USAGETYPES_H
 #define USAGETYPES_H
 
-// 사용량 경고 임계값 (공통)
-#define USAGE_WARN_PCT 71   // 71% 이상 → 주황
-#define USAGE_CRIT_PCT 86   // 86% 이상 → 빨강
+// 사용량 경고 임계값 (공통 - claude.ai 기준 75% / 90%)
+#define USAGE_WARN_PCT 75   // 75% 이상 → 주황
+#define USAGE_CRIT_PCT 90   // 90% 이상 → 빨강
 
 #include <QDateTime>
 #include <QString>

@@ -36,12 +36,16 @@ set(DATA_SOURCES        # 외부 입력 — 파일·네트워크·자격증명
     src/data/SessionLogReader.cpp
     src/data/SessionLogWatcher.h
     src/data/SessionLogWatcher.cpp
+    src/data/HookBridge.h
+    src/data/HookBridge.cpp
 )
 set(UI_SOURCES          # 화면
     src/ui/QuotaGauge.h
     src/ui/QuotaGauge.cpp
     src/ui/UsageWindow.h
     src/ui/UsageWindow.cpp
+    src/ui/StatusDot.h
+    src/ui/StatusDot.cpp
     src/ui/ToggleSwitch.h
     src/ui/ToggleSwitch.cpp
 )
@@ -258,6 +262,14 @@ if(WIN32)
     # 버전이 중복 설치되므로 절대 변경하지 말 것.
     set(CPACK_WIX_UPGRADE_GUID "9B5C7BFF-E32D-4B51-A4E1-23F67D7D1234")
     set(CPACK_WIX_ROOT_FEATURE_TITLE "Claude Tracker")
+
+    # 설치 중 실행 중인 앱을 닫는다. CPack 이 만드는 <MajorUpgrade> 는 기존
+    # 버전을 새 파일 복사 전에 제거해 주지만(RemoveExistingProducts 가
+    # InstallFiles 보다 앞선다), '실행 중인 프로세스'까지 처리하지는 않는다.
+    # WixUtilExtension 의 CloseApplication 이 그 몫이다.
+    set(CPACK_WIX_EXTENSIONS "WixUtilExtension")
+    set(CPACK_WIX_CUSTOM_XMLNS "util=http://schemas.microsoft.com/wix/UtilExtension")
+    set(CPACK_WIX_PATCH_FILE "${CMAKE_CURRENT_SOURCE_DIR}/resources/wix_patch.xml")
     # 제어판 '프로그램 및 기능' 목록에 표시될 아이콘
     set(CPACK_WIX_PRODUCT_ICON "${CMAKE_CURRENT_SOURCE_DIR}/resources/appicon.ico")
     # 시작 메뉴 바로가기 (exe 이름, 표시 이름)

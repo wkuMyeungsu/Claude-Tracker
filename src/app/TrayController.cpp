@@ -1,6 +1,7 @@
 
 #include "TrayController.h"
 #include "CredentialsReader.h"
+#include "HookBridge.h"
 #include "SessionLogWatcher.h"
 #include "UsageAggregator.h"
 #include "UsageApiClient.h"
@@ -23,6 +24,7 @@ TrayController::TrayController(QObject *parent)
     , m_popup(new UsageWindow)
     , m_apiClient(new UsageApiClient(this))
     , m_scanner(new SessionLogWatcher(this))
+    , m_hookWatcher(new HookBridge::StateWatcher(this))
     , m_countdownTimer(new QTimer(this))
 {
     // 보정 계수: 디스크에 학습분이 있으면 이어서 쓰고, 없으면 플랜 한도 prior 로
@@ -61,6 +63,17 @@ TrayController::TrayController(QObject *parent)
         m_isActive = false;
         m_popup->setIdle();
     });
+
+    // 훅이 알려주는 정확한 실행 상태(작업 중 / 승인 대기 / 대화 가능).
+    // 훅이 꺼져 있으면 Unknown 만 오고, 팝업은 위의 활동 감지로 폴백한다.
+    connect(m_hookWatcher, &HookBridge::StateWatcher::stateChanged,
+            m_popup, &UsageWindow::setAgentState);
+    connect(m_popup, &UsageWindow::approvalDetectionChanged,
+            m_hookWatcher, &HookBridge::StateWatcher::rescan);
+    // 재설치로 exe 경로가 바뀌면 옛 경로가 남아 훅이 조용히 죽는다. 여기서 고친다.
+    if (HookBridge::hooksInstalled() && !HookBridge::hooksUpToDate())
+        HookBridge::installHooks();
+    m_hookWatcher->rescan();
 
     // 앱 재시작 후 API 응답 전까지 마지막 resetsAt 로 추정
     QSettings s("ClaudeTray", "ClaudeTray");
@@ -106,6 +119,11 @@ void TrayController::onUsageFetched(UsageData data)
     m_apiFailed = false;
     m_lastFetchError.clear();
     m_resetFetchRequested = false;
+
+    // 방금 도착한 값이 크레딧의 정답지다. m_current(우리가 보여주던 추정치)와
+    // m_lastApiData(직전 정답지)를 덮어쓰기 '전'에 관측 1건을 만든다.
+    observeCreditCalibration(data);
+
     m_current = data;
     m_lastApiData = data;
     m_hasLastApiData = true;
@@ -189,7 +207,21 @@ void TrayController::applyData(const UsageData &data)
     // 과금 로직(UsageMerger::chargeableRatio 는 max 기준)과 정반대 신호를 줬다.
     const double dominant = qMax(data.fiveHour.utilization,
                                  data.sevenDay.utilization);
-    m_tray->setIcon(makeIcon(dominant));
+
+    // 크레딧이 나가는 중이면 5h·7d 는 이미 100% 로 포화돼 있다. 그 값을 링에
+    // 그대로 넘기면 항상 360° 꽉 찬 띠가 되어 아무 정보도 주지 못한다(실제로
+    // "그냥 파란 띠"로 보였다). 그때는 대시보드 컴팩트 뷰와 똑같이 '크레딧을
+    // 얼마나 썼는가'로 바꿔 채운다.
+    //
+    // 한도를 모르거나($0) 아직 한 푼도 안 썼으면 채울 비율 자체가 없으므로
+    // 기존 5h·7d 링을 그대로 둔다 — 빈 링으로 퇴화시키지 않는다.
+    const bool creditMetered = data.extraUsage.enabled
+                            && data.extraUsage.limitDollars > 0.0
+                            && data.extraUsage.usedCredits  > 0.0;
+
+    const double ringValue = creditMetered ? qBound(0.0, data.extraUsage.utilization, 1.0)
+                                           : dominant;
+    m_tray->setIcon(makeIcon(ringValue, creditMetered));
     updateTooltip();
 }
 
@@ -199,7 +231,57 @@ UsageData TrayController::mergeWithLastApi(const UsageData &data) const
         return data;
 
     return UsageMerger::mergeWithLastApi(m_lastApiData, data,
-                                        QDateTime::currentDateTimeUtc());
+                                        QDateTime::currentDateTimeUtc(),
+                                        m_calibration.credit.k);
+}
+
+// 크레딧 관측 1건.
+//
+// 5h/7d 처럼 '같은 시점의 특징벡터'로 짝을 만들 수 없다. 크레딧은 월 누적이고
+// API 는 '지금까지 쓴 총액'만 알려주기 때문이다. 대신 폴링 구간의 증분을 쓴다.
+//
+//   실측 증가분 = 이번 API 값 − 직전 API 값
+//   예측 증가분 = 우리가 보여주던 값 − 직전 API 값   (= 보정 전 증분 × k)
+//
+// 두 증가분이 같은 구간을 가리키므로 그대로 관측 1건이 된다.
+void TrayController::observeCreditCalibration(const UsageData &fresh)
+{
+    if (!m_hasLastApiData)
+        return;
+    // 한도·활성 여부는 API 만 안다. 꺼져 있으면 크레딧이 나가지 않는다.
+    if (!fresh.extraUsage.enabled || !m_lastApiData.extraUsage.enabled)
+        return;
+
+    // 월이 바뀌면 크레딧이 0 으로 리셋돼 증분의 의미가 사라진다.
+    const QDate prevMonth = m_lastApiData.fetchedAt.toUTC().date();
+    const QDate thisMonth = fresh.fetchedAt.toUTC().date();
+    if (!prevMonth.isValid() || !thisMonth.isValid()
+        || prevMonth.year()  != thisMonth.year()
+        || prevMonth.month() != thisMonth.month())
+        return;
+
+    const double base           = m_lastApiData.extraUsage.usedCredits;
+    const double actualIncrement = fresh.extraUsage.usedCredits - base;
+
+    // 보여주던 추정치에서 배율을 되돌려 '보정 전' 증분을 뽑는다.
+    //   m_current = base + raw × k   →   raw = (m_current − base) / k
+    const double k = m_calibration.credit.isValid() ? m_calibration.credit.k : 1.0;
+    const double rawIncrement = (m_current.extraUsage.usedCredits - base) / k;
+
+    double residual = 0.0;
+    if (!QuotaCalibrator::observeCredit(m_calibration.credit, rawIncrement,
+                                        actualIncrement, &residual))
+        return;
+
+    m_scanner->setCalibration(m_calibration);
+    QuotaCalibrator::saveTo("calibration", m_calibration);
+
+    qDebug() << "[TrayController] 크레딧 보정 k="
+             << QString::number(m_calibration.credit.k, 'f', 4)
+             << "samples=" << m_calibration.credit.samples
+             << "| 예측=" << QString::number(rawIncrement * k, 'f', 4)
+             << "실측=" << QString::number(actualIncrement, 'f', 4)
+             << "잔차=" << QString::number(residual, 'f', 4);
 }
 
 // API 응답 1건 = 정답지 1장. 같은 시점의 로컬 특징벡터와 짝지어 계수를 당긴다.
@@ -268,21 +350,31 @@ void TrayController::updateTooltip()
                       .arg(pct(m_current.sevenDay));
 
     if (m_current.extraUsage.enabled) {
-        tip += QString("\n추가 크레딧: $%1 / $%2 (%3%)")
+        tip += QString("\n크레딧 사용량: $%1 / $%2 (%3%)")
                    .arg(m_current.extraUsage.usedCredits, 0, 'f', 2)
                    .arg(m_current.extraUsage.limitDollars, 0, 'f', 2)
                    .arg(qRound(m_current.extraUsage.utilization * 100.0));
     }
 
     if (!m_current.recentModel.isEmpty()) {
-        tip += QString("\n최근 모델: %1").arg(m_current.recentModel);
+        QString name = m_current.recentModel;
+        if (name.startsWith("claude-"))
+            name = name.mid(7);
+        QStringList parts = name.split('-');
+        if (parts.size() > 2 && parts.last().length() >= 8 && parts.last().toLongLong() > 0) {
+            parts.removeLast();
+            name = parts.join('-');
+        }
+        if (name.isEmpty())
+            name = "Claude";
+        tip += QString("\nModel : %1").arg(name);
     }
 
     tip += "\n" + formatCountdown(m_current.fiveHour.resetsAt);
     m_tray->setToolTip(tip);
 }
 
-QIcon TrayController::makeIcon(double utilization)
+QIcon TrayController::makeIcon(double utilization, bool creditActive)
 {
     // tools/gen_icon.py 가 만드는 appicon.ico 와 동일한 도형이다.
     // 한쪽 수치를 바꾸면 다른 쪽도 반드시 맞출 것.
@@ -318,7 +410,9 @@ QIcon TrayController::makeIcon(double utilization)
     const double v = qBound(0.0, utilization, 1.0);
     if (v > 0.0) {
         QColor c;
-        if (utilization < USAGE_WARN_PCT / 100.0)
+        if (creditActive)
+            c = QColor("#0a84ff");            // 크레딧 모드 — 대시보드 게이지와 같은 색
+        else if (utilization < USAGE_WARN_PCT / 100.0)
             c = QColor("#28a745");
         else if (utilization < USAGE_CRIT_PCT / 100.0)
             c = QColor("#ffc107");

@@ -14,7 +14,8 @@ add_executable(tst_usagelogic
     ${CMAKE_SOURCE_DIR}/src/core/QuotaCalibrator.cpp
     ${CMAKE_SOURCE_DIR}/src/data/SessionLogReader.cpp
     ${CMAKE_SOURCE_DIR}/src/data/UsageApiClient.cpp
-    ${CMAKE_SOURCE_DIR}/src/data/CredentialsReader.cpp   # UsageApiClient 가 의존
+    ${CMAKE_SOURCE_DIR}/src/data/HookBridge.cpp
+    ${CMAKE_SOURCE_DIR}/src/data/CredentialsReader.cpp   # UsageApiClient·HookBridge 가 의존
     # 요율 조회가 :/model_pricing.json 을 읽으므로 리소스도 함께 컴파일한다
     ${CMAKE_SOURCE_DIR}/resources/resources.qrc
 )

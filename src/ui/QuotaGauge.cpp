@@ -38,12 +38,36 @@ void ThresholdBar::setValue(int pct)
     update();
 }
 
+void ThresholdBar::setAccentColor(const QColor &color)
+{
+    m_accent = color;
+    update();
+}
+
+void ThresholdBar::setDisableShimmer(bool disable)
+{
+    m_disableShimmer = disable;
+    if (disable) {
+        m_fadeAnim->stop();
+        m_shimmerAnim->stop();
+        m_shimmerAlpha = 0.0f;
+        m_shimmerPos = 0.0f;
+        update();
+    } else if (m_active) {
+        m_fadeAnim->stop();
+        m_shimmerAlpha = 1.0f;
+        m_shimmerAnim->setLoopCount(-1);
+        if (m_shimmerAnim->state() != QAbstractAnimation::Running)
+            m_shimmerAnim->start();
+    }
+}
+
 void ThresholdBar::setActive(bool active)
 {
     if (m_active == active) return;
     m_active = active;
 
-    if (active) {
+    if (active && !m_disableShimmer) {
         m_fadeAnim->stop();
         m_shimmerAlpha = 1.0f;
         m_shimmerAnim->setLoopCount(-1);
@@ -70,9 +94,10 @@ void ThresholdBar::paintEvent(QPaintEvent *)
 
     // 채움 색상
     QColor fillColor;
-    if (m_value < USAGE_WARN_PCT)      fillColor = QColor("#28a745");
-    else if (m_value < USAGE_CRIT_PCT) fillColor = QColor("#ffc107");
-    else                               fillColor = QColor("#dc3545");
+    if (m_accent.isValid())                 fillColor = m_accent;
+    else if (m_value < USAGE_WARN_PCT)      fillColor = QColor("#28a745");
+    else if (m_value < USAGE_CRIT_PCT)      fillColor = QColor("#ffc107");
+    else                                    fillColor = QColor("#dc3545");
 
     if (m_value > 0) {
         const int fillW = qRound(r.width() * m_value / 100.0);
@@ -167,6 +192,11 @@ void QuotaGauge::setCountdown(const QString &text)
 void QuotaGauge::setActive(bool active)
 {
     m_bar->setActive(active);
+}
+
+void QuotaGauge::setDisableShimmer(bool disable)
+{
+    m_bar->setDisableShimmer(disable);
 }
 
 
