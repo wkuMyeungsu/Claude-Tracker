@@ -1,9 +1,9 @@
 # ClaudeTray
 
-Windows 시스템 트레이에서 Claude Code의 사용량(Quota)과 추가 결제 크레딧을 실시간으로 추적하는 Qt6 기반 모니터링 프로그램입니다.
+Windows 및 Linux 시스템 트레이에서 Claude Code의 사용량(Quota)과 추가 결제 크레딧을 실시간으로 추적하는 Qt6 기반 모니터링 프로그램입니다.
 
 [![Download Windows](https://img.shields.io/badge/Download-Windows_v1.2.0-0078D6?style=for-the-badge&logo=windows&logoColor=white)](https://github.com/wkuMyeungsu/Claude-Tracker/releases/tag/v1.2.0)
-![badge](https://img.shields.io/badge/version-1.2.0-blue) ![badge](https://img.shields.io/badge/Qt-6.x-green) ![badge](https://img.shields.io/badge/platform-Windows-blue) ![badge](https://img.shields.io/badge/language-C%2B%2B17-orange)
+![badge](https://img.shields.io/badge/version-1.2.0-blue) ![badge](https://img.shields.io/badge/Qt-6.x-green) ![badge](https://img.shields.io/badge/platform-Windows%20%7C%20Linux-blue) ![badge](https://img.shields.io/badge/language-C%2B%2B17-orange)
 
 ---
 
@@ -27,13 +27,14 @@ Windows 시스템 트레이에서 Claude Code의 사용량(Quota)과 추가 결�
 
 [릴리즈 페이지](https://github.com/wkuMyeungsu/Claude-Tracker/releases/tag/v1.2.0)에서 다운로드할 수 있습니다.
 
-| 파일 | 용도 |
-| --- | --- |
-| `claude-tracker-1.2.0-win64.msi` | 설치 프로그램 (권장) |
-| `claude-tracker-1.2.0-win64.zip` | 무설치 휴대용 (압축 해제 후 `bin\ClaudeTray.exe` 실행) |
+| 운영체제 | 파일 / 방법 | 비고 |
+| --- | --- | --- |
+| **Windows** | `claude-tracker-1.2.0-win64.msi` | 설치 프로그램 (권장) |
+| **Windows** | `claude-tracker-1.2.0-win64.zip` | 무설치 휴대용 (압축 해제 후 `bin\ClaudeTray.exe` 실행) |
+| **Linux** | 소스 코드 빌드 실행 | Qt6 환경에서 빌드 후 `./ClaudeTray` 실행 |
 
-- **Qt 별도 설치 불필요**: 실행에 필요한 Qt 런타임과 플러그인이 모듈화되어 동봉되어 있습니다.
-- **요구사항**: Windows 10 / 11 (64비트), Claude Code 로그인 상태 (`~/.claude/.credentials.json`)
+- **Qt 별도 설치 불필요 (Windows)**: 윈도우 패키지에는 Qt 런타임과 플러그인이 포함되어 있습니다.
+- **요구사항**: Windows 10 / 11 (64비트) 또는 Linux / macOS, Claude Code 로그인 상태 (`~/.claude/.credentials.json`)
 
 ---
 
@@ -58,7 +59,20 @@ Windows 시스템 트레이에서 Claude Code의 사용량(Quota)과 추가 결�
 
 ## 개발자 가이드
 
-### 빌드 방법 (PowerShell)
+### 빌드 방법 (Linux / macOS)
+
+```bash
+# Ubuntu / Debian 의존성 설치
+sudo apt update
+sudo apt install build-essential cmake qt6-base-dev
+
+# 빌드 및 실행
+cmake -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build
+./build/ClaudeTray
+```
+
+### 빌드 방법 (Windows PowerShell)
 
 ```powershell
 $QtRoot  = "C:\Qt"
@@ -81,16 +95,16 @@ cmake --build build
 
 ### 테스트 실행
 
-```powershell
+```bash
 cd build
 ctest --output-on-failure
 ```
 
 ### 배포 패키지 생성
 
-```powershell
+```bash
 cd build
-cpack          # claude-tracker-<버전>-win64.msi / .zip 생성
+cpack          # Windows: .msi / .zip 생성, Linux: .tar.gz 생성
 ```
 
 ### 파일 구조
