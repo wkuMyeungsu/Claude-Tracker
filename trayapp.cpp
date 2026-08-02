@@ -77,6 +77,14 @@ TrayApp::TrayApp(QObject *parent)
     m_apiClient->checkForUpdates();
 }
 
+TrayApp::~TrayApp()
+{
+    // 트레이 아이콘이 이미 파괴된 메뉴를 가리키지 않도록 먼저 연결을 끊는다.
+    m_tray->setContextMenu(nullptr);
+    delete m_contextMenu;
+    delete m_popup;
+}
+
 void TrayApp::onTrayActivated(QSystemTrayIcon::ActivationReason reason)
 {
     if (reason == QSystemTrayIcon::Context)
@@ -169,10 +177,14 @@ void TrayApp::applyData(const UsageData &data)
         formatCountdown(data.fiveHour.resetsAt),
         formatCountdown(data.sevenDay.resetsAt));
 
-    // 7d >= 5h → 5h 기준, 7d < 5h → 7d 기준 (라인 색상과 동일 로직)
-    const double dominant = (data.sevenDay.utilization >= data.fiveHour.utilization)
-        ? data.fiveHour.utilization
-        : data.sevenDay.utilization;
+    // 5h·7d 중 '더 많이 찬' 쪽을 아이콘에 쓴다. 한눈에 봐야 하는 정보는
+    // "얼마나 여유로운가"가 아니라 "얼마나 임박했는가"이기 때문이다.
+    //
+    // 예전에는 작은 쪽(min)을 썼다. 그러면 주간 한도를 다 써서 추가 크레딧이
+    // 나가는 중인데도 5시간 창이 막 리셋돼 20% 면 아이콘이 초록으로 표시돼,
+    // 과금 로직(UsageMerge::chargeableRatio 는 max 기준)과 정반대 신호를 줬다.
+    const double dominant = qMax(data.fiveHour.utilization,
+                                 data.sevenDay.utilization);
     m_tray->setIcon(makeIcon(dominant));
     updateTooltip();
 }

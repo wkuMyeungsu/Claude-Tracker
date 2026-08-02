@@ -11,8 +11,13 @@
 int main(int argc, char *argv[])
 {
 #ifdef Q_OS_WIN
-    // 빌드마다 "실행 중입니다" 알림이 반복되지 않도록 앱 ID 고정
-    SetCurrentProcessExplicitAppUserModelID(L"Anthropic.ClaudeTray");
+    // 빌드마다 "실행 중입니다" 알림이 반복되지 않도록 앱 ID 고정.
+    //
+    // 네임스페이스는 반드시 이 앱 소유여야 한다. 예전 값 "Anthropic.ClaudeTray" 는
+    // 서드파티 앱이 Anthropic 의 이름을 빌려 쓴 것이라, 같은 접두사를 쓰는 다른
+    // 프로그램과 작업 표시줄 그룹·점프 목록·알림이 뒤섞일 수 있었다.
+    // 형식은 CompanyName.ProductName (공백 불가, 128자 이하).
+    SetCurrentProcessExplicitAppUserModelID(L"wkuMyeungsu.ClaudeTray");
 #endif
 
     QApplication app(argc, argv);

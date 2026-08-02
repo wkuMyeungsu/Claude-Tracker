@@ -16,6 +16,10 @@ class TrayApp : public QObject
     Q_OBJECT
 public:
     explicit TrayApp(QObject *parent = nullptr);
+    // m_contextMenu 와 m_popup 은 최상위 QWidget 이라 QObject 인 TrayApp 을
+    // 부모로 삼을 수 없다. QSystemTrayIcon::setContextMenu 도 소유권을 가져가지
+    // 않으므로 여기서 직접 정리해야 한다.
+    ~TrayApp() override;
 
 private slots:
     void onUsageFetched(UsageData data);
