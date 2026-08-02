@@ -21,14 +21,16 @@ UsagePopup::UsagePopup(QWidget *parent)
     : QWidget(parent, Qt::Tool | Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint)
 {
     setFixedWidth(280);
+    setAttribute(Qt::WA_TranslucentBackground);
 
     auto *root = new QVBoxLayout(this);
     root->setContentsMargins(0, 0, 0, 0);
     root->setSpacing(0);
 
     m_titleBar = new QWidget;
+    m_titleBar->setObjectName("titleBar");
     m_titleBar->setFixedHeight(36);
-    m_titleBar->setStyleSheet("background: #2d2d2d;");
+    m_titleBar->setStyleSheet("#titleBar { background: #2d2d2d; border-top-left-radius: 8px; border-top-right-radius: 8px; }");
     m_titleBar->setCursor(Qt::SizeAllCursor);
     m_titleBar->installEventFilter(this);
 
@@ -157,7 +159,8 @@ UsagePopup::UsagePopup(QWidget *parent)
     }
 
     m_footer = new QWidget;
-    m_footer->setStyleSheet("background: #f8f9fa;");
+    m_footer->setObjectName("footerWidget");
+    m_footer->setStyleSheet("#footerWidget { background: #f8f9fa; border-bottom-left-radius: 8px; border-bottom-right-radius: 8px; }");
     auto *footerLayout = new QVBoxLayout(m_footer);
     footerLayout->setContentsMargins(14, 6, 8, 8);
     footerLayout->setSpacing(0);
@@ -198,7 +201,8 @@ UsagePopup::UsagePopup(QWidget *parent)
 
     // 설정 패널 (기본 숨김)
     m_settingsPanel = new QWidget;
-    m_settingsPanel->setStyleSheet("background: #f0f0f0; border-top: 1px solid #ddd;");
+    m_settingsPanel->setObjectName("settingsPanel");
+    m_settingsPanel->setStyleSheet("#settingsPanel { background: #f0f0f0; border-top: 1px solid #ddd; border-bottom-left-radius: 8px; border-bottom-right-radius: 8px; }");
     auto *settingsLayout = new QVBoxLayout(m_settingsPanel);
     settingsLayout->setContentsMargins(6, 6, 6, 6);
 
@@ -217,9 +221,11 @@ UsagePopup::UsagePopup(QWidget *parent)
         if (open) {
             m_settingsPanel->setMaximumHeight(QWIDGETSIZE_MAX);
             m_settingsPanel->show();
+            m_footer->setStyleSheet("#footerWidget { background: #f8f9fa; border-bottom-left-radius: 0px; border-bottom-right-radius: 0px; }");
         } else {
             m_settingsPanel->setMaximumHeight(0);
             m_settingsPanel->hide();
+            m_footer->setStyleSheet("#footerWidget { background: #f8f9fa; border-bottom-left-radius: 8px; border-bottom-right-radius: 8px; }");
         }
         m_collapsingBody->layout()->invalidate();
         m_collapsingBody->adjustSize();
@@ -272,7 +278,8 @@ UsagePopup::UsagePopup(QWidget *parent)
     root->addWidget(m_titleBar);
     root->addWidget(m_collapsingBody);
 
-    setStyleSheet("QWidget { background: white; }");
+    setObjectName("UsagePopup");
+    setStyleSheet("#UsagePopup { background: white; border-radius: 8px; border: 1px solid #cccccc; }");
 
     m_opacityAnim = new QPropertyAnimation(this, "windowOpacity", this);
     m_opacityAnim->setDuration(300);
