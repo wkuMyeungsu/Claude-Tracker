@@ -1,5 +1,5 @@
-#include "usagescanner.h"
-#include "credentialsreader.h"
+#include "UsageScanner.h"
+#include "CredentialsReader.h"
 #include <QDateTime>
 #include <QTimeZone>
 #include <QDebug>
@@ -55,7 +55,7 @@ UsageScanner::UsageScanner(QObject *parent)
 
     // 학습된 계수가 주입되기 전까지는 플랜 한도에서 유도한 prior 로 동작한다.
     // prior 는 예전 하드코딩 공식과 동일하므로 첫 실행 화면이 달라지지 않는다.
-    m_calibration = UsageCalibrator::priorsFor(planLimit5h(), planLimit7d());
+    m_calibration = QuotaCalibrator::priorsFor(planLimit5h(), planLimit7d());
 
     connect(m_watcher, &QFileSystemWatcher::directoryChanged,
             this, &UsageScanner::onDirectoryChanged);
@@ -364,7 +364,7 @@ ScanResult UsageScanner::aggregate(const QVector<TokenRecord> &records,
 
         // extraUsage.enabled 는 API 만이 켤 수 있다. 스캐너가 켜 버리면 한도를
         // 모르는 채로 "추가 결제 크레딧 $x / $0.00" 패널이 떠 버린다.
-        // 비용만 채우고, 표시 여부는 API 값을 가진 쪽(TrayApp)에 맡긴다.
+        // 비용만 채우고, 표시 여부는 API 값을 가진 쪽(TrayController)에 맡긴다.
         d.extraUsage.enabled     = false;
         d.extraUsage.usedCredits = credits;
 

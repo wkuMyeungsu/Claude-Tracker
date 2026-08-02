@@ -1,5 +1,5 @@
-#include "usagemerge.h"
-#include "usagescanner.h"
+#include "UsageMerger.h"
+#include "UsageScanner.h"
 
 namespace {
 
@@ -34,7 +34,7 @@ QuotaInfo mergeQuota(const QuotaInfo &apiQuota, const QuotaInfo &deltaQuota,
 
 } // namespace
 
-double UsageMerge::chargeableRatioFor(const QuotaInfo &api, const QuotaInfo &delta,
+double UsageMerger::chargeableRatioFor(const QuotaInfo &api, const QuotaInfo &delta,
                                       bool resetOccurred)
 {
     if (!api.valid)
@@ -66,7 +66,7 @@ double UsageMerge::chargeableRatioFor(const QuotaInfo &api, const QuotaInfo &del
     return qMin(1.0, (totalUtil - 1.0) / deltaUtil);
 }
 
-double UsageMerge::chargeableRatio(const UsageData &lastApi, const UsageData &delta,
+double UsageMerger::chargeableRatio(const UsageData &lastApi, const UsageData &delta,
                                    bool reset5hOccurred, bool reset7dOccurred)
 {
     // 5h 만 보면 안 된다. 주간 한도를 다 쓴 상태에서 5시간 창이 막 리셋돼
@@ -80,7 +80,7 @@ double UsageMerge::chargeableRatio(const UsageData &lastApi, const UsageData &de
     return best < 0.0 ? 1.0 : best;       // 판단 가능한 창이 없으면 전액 청구
 }
 
-UsageData UsageMerge::mergeWithLastApi(const UsageData &lastApi,
+UsageData UsageMerger::mergeWithLastApi(const UsageData &lastApi,
                                        const UsageData &delta,
                                        const QDateTime &nowUtc)
 {

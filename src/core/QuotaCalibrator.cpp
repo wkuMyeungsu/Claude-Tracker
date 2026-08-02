@@ -1,4 +1,4 @@
-#include "usagecalibrator.h"
+#include "QuotaCalibrator.h"
 
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -84,9 +84,9 @@ bool QuotaCoefficients::isValid() const
     return false;
 }
 
-// ── UsageCalibrator ──────────────────────────────────────────────────────────
+// ── QuotaCalibrator ──────────────────────────────────────────────────────────
 
-namespace UsageCalibrator {
+namespace QuotaCalibrator {
 
 QuotaCoefficients priorFor(qint64 limitTokens)
 {
@@ -229,4 +229,4 @@ bool loadFrom(const QString &group, CalibrationSet &set)
     return true;
 }
 
-} // namespace UsageCalibrator
+} // namespace QuotaCalibrator

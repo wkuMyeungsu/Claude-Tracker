@@ -1,4 +1,4 @@
-#include "toggleswitch.h"
+#include "ToggleSwitch.h"
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPainterPath>

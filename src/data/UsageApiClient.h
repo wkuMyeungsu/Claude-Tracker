@@ -2,7 +2,7 @@
 #define USAGEAPICLIENT_H
 
 #include <QObject>
-#include "usagedata.h"
+#include "UsageTypes.h"
 
 class QNetworkAccessManager;
 class QNetworkReply;

@@ -1,9 +1,9 @@
 
-#include "trayapp.h"
-#include "usageapiclient.h"
-#include "usagemerge.h"
-#include "usagepopup.h"
-#include "usagescanner.h"
+#include "TrayController.h"
+#include "UsageApiClient.h"
+#include "UsageMerger.h"
+#include "UsageWindow.h"
+#include "UsageScanner.h"
 #include <QApplication>
 #include <QCursor>
 #include <QMenu>
@@ -14,20 +14,20 @@
 #include <QDesktopServices>
 #include <QUrl>
 
-TrayApp::TrayApp(QObject *parent)
+TrayController::TrayController(QObject *parent)
     : QObject(parent)
     , m_tray(new QSystemTrayIcon(this))
     , m_contextMenu(new QMenu)
-    , m_popup(new UsagePopup)
+    , m_popup(new UsageWindow)
     , m_apiClient(new UsageApiClient(this))
     , m_scanner(new UsageScanner(this))
     , m_countdownTimer(new QTimer(this))
 {
     // 보정 계수: 디스크에 학습분이 있으면 이어서 쓰고, 없으면 플랜 한도 prior 로
     // 시작한다. prior 는 예전 하드코딩 공식과 동일해서 첫 실행 표시가 변하지 않는다.
-    m_calibPriors = UsageCalibrator::priorsFor(UsageScanner::planLimit5h(),
+    m_calibPriors = QuotaCalibrator::priorsFor(UsageScanner::planLimit5h(),
                                                UsageScanner::planLimit7d());
-    if (!UsageCalibrator::loadFrom("calibration", m_calibration))
+    if (!QuotaCalibrator::loadFrom("calibration", m_calibration))
         m_calibration = m_calibPriors;
     m_scanner->setCalibration(m_calibration);
 
@@ -39,19 +39,19 @@ TrayApp::TrayApp(QObject *parent)
     m_tray->show();
 
     connect(m_tray, &QSystemTrayIcon::activated,
-            this, &TrayApp::onTrayActivated);
+            this, &TrayController::onTrayActivated);
 
     connect(m_apiClient, &UsageApiClient::fetchStarted, this, [this]() {
-        m_popup->setRefreshState(UsagePopup::RefreshState::Fetching);
+        m_popup->setRefreshState(UsageWindow::RefreshState::Fetching);
     });
     connect(m_apiClient, &UsageApiClient::usageFetched,
-            this, &TrayApp::onUsageFetched);
+            this, &TrayController::onUsageFetched);
     connect(m_apiClient, &UsageApiClient::fetchFailed,
-            this, &TrayApp::onFetchFailed);
+            this, &TrayController::onFetchFailed);
     connect(m_scanner, &UsageScanner::localUsageUpdated,
-            this, &TrayApp::onLocalUsage);
+            this, &TrayController::onLocalUsage);
     connect(m_scanner, &UsageScanner::activityDetected,
-            this, &TrayApp::onActivityDetected);
+            this, &TrayController::onActivityDetected);
     // activityStopped → 게이지바 shimmer 정지 + 10초 뒤 팝업 반투명화 예약
     connect(m_scanner, &UsageScanner::activityStopped, this, [this]() {
         m_isActive = false;
@@ -66,18 +66,18 @@ TrayApp::TrayApp(QObject *parent)
         m_scanner->setWindowHints(r5h, r7d);
 
     connect(m_countdownTimer, &QTimer::timeout,
-            this, &TrayApp::updateCountdowns);
+            this, &TrayController::updateCountdowns);
     m_countdownTimer->start(60 * 1000);
 
     connect(m_apiClient, &UsageApiClient::updateAvailable,
-            this, &TrayApp::onUpdateAvailable);
+            this, &TrayController::onUpdateAvailable);
     connect(m_tray, &QSystemTrayIcon::messageClicked,
-            this, &TrayApp::onUpdateNotificationClicked);
+            this, &TrayController::onUpdateNotificationClicked);
 
     m_apiClient->checkForUpdates();
 }
 
-TrayApp::~TrayApp()
+TrayController::~TrayController()
 {
     // 트레이 아이콘이 이미 파괴된 메뉴를 가리키지 않도록 먼저 연결을 끊는다.
     m_tray->setContextMenu(nullptr);
@@ -85,7 +85,7 @@ TrayApp::~TrayApp()
     delete m_popup;
 }
 
-void TrayApp::onTrayActivated(QSystemTrayIcon::ActivationReason reason)
+void TrayController::onTrayActivated(QSystemTrayIcon::ActivationReason reason)
 {
     if (reason == QSystemTrayIcon::Context)
         return;
@@ -97,7 +97,7 @@ void TrayApp::onTrayActivated(QSystemTrayIcon::ActivationReason reason)
     }
 }
 
-void TrayApp::onUsageFetched(UsageData data)
+void TrayController::onUsageFetched(UsageData data)
 {
     m_apiFailed = false;
     m_lastFetchError.clear();
@@ -121,12 +121,12 @@ void TrayApp::onUsageFetched(UsageData data)
     s.setValue("reset7d",  data.sevenDay.resetsAt.toString(Qt::ISODate));
 
     applyData(data);
-    m_popup->setRefreshState(UsagePopup::RefreshState::Refreshed,
+    m_popup->setRefreshState(UsageWindow::RefreshState::Refreshed,
                              m_lastSuccessfulApiFetchAt,
                              m_apiClient->nextScheduledFetchAt());
 }
 
-void TrayApp::onFetchFailed(QString reason, bool networkError)
+void TrayController::onFetchFailed(QString reason, bool networkError)
 {
     m_apiFailed = true;
     m_lastFetchError = reason;
@@ -137,13 +137,13 @@ void TrayApp::onFetchFailed(QString reason, bool networkError)
     m_scanner->requestScan();
 
     const auto state = networkError
-        ? UsagePopup::RefreshState::NetworkError
-        : UsagePopup::RefreshState::LocalFallback;
+        ? UsageWindow::RefreshState::NetworkError
+        : UsageWindow::RefreshState::LocalFallback;
     m_popup->setRefreshState(state);
 }
 
 // full, delta 는 백그라운드 스캔에서 이미 계산된 결과 → 메인 스레드 재스캔 없음
-void TrayApp::onLocalUsage(ScanResult result)
+void TrayController::onLocalUsage(ScanResult result)
 {
     trainCalibration(result);
 
@@ -155,7 +155,7 @@ void TrayApp::onLocalUsage(ScanResult result)
 
     // API 실패 시에만 로컬 폴백 표시 (성공 후 로컬 증분은 🟢 유지)
     if (m_apiFailed)
-        m_popup->setRefreshState(UsagePopup::RefreshState::LocalFallback);
+        m_popup->setRefreshState(UsageWindow::RefreshState::LocalFallback);
 
     // 마지막 API resetsAt 가 이미 지났으면 즉시 재호출 → 정확한 새 리셋 시각 수신
     // 단, 이미 요청했으면 중복 호출하지 않는다. 매 스캔마다 fetchUsage 를 부르면
@@ -170,7 +170,7 @@ void TrayApp::onLocalUsage(ScanResult result)
     }
 }
 
-void TrayApp::applyData(const UsageData &data)
+void TrayController::applyData(const UsageData &data)
 {
     m_popup->setData(data);
     m_popup->setCountdowns(
@@ -182,26 +182,26 @@ void TrayApp::applyData(const UsageData &data)
     //
     // 예전에는 작은 쪽(min)을 썼다. 그러면 주간 한도를 다 써서 추가 크레딧이
     // 나가는 중인데도 5시간 창이 막 리셋돼 20% 면 아이콘이 초록으로 표시돼,
-    // 과금 로직(UsageMerge::chargeableRatio 는 max 기준)과 정반대 신호를 줬다.
+    // 과금 로직(UsageMerger::chargeableRatio 는 max 기준)과 정반대 신호를 줬다.
     const double dominant = qMax(data.fiveHour.utilization,
                                  data.sevenDay.utilization);
     m_tray->setIcon(makeIcon(dominant));
     updateTooltip();
 }
 
-UsageData TrayApp::mergeWithLastApi(const UsageData &data) const
+UsageData TrayController::mergeWithLastApi(const UsageData &data) const
 {
     if (!m_hasLastApiData)
         return data;
 
-    return UsageMerge::mergeWithLastApi(m_lastApiData, data,
+    return UsageMerger::mergeWithLastApi(m_lastApiData, data,
                                         QDateTime::currentDateTimeUtc());
 }
 
 // API 응답 1건 = 정답지 1장. 같은 시점의 로컬 특징벡터와 짝지어 계수를 당긴다.
 // 관측이 쌓일수록 "토큰 1개가 할당량의 몇 %를 먹는가"가 이 사용자의 실제
 // 사용 패턴(모델 구성·캐시 비율·플랜)에 맞춰 정확해진다.
-void TrayApp::trainCalibration(const ScanResult &result)
+void TrayController::trainCalibration(const ScanResult &result)
 {
     if (!m_calibObservationPending || !m_hasLastApiData)
         return;
@@ -212,7 +212,7 @@ void TrayApp::trainCalibration(const ScanResult &result)
                           const QuotaInfo &truth, const QuotaCoefficients &prior) {
         if (!truth.valid)
             return;
-        if (UsageCalibrator::observe(coeff, features, truth.utilization, prior))
+        if (QuotaCalibrator::observe(coeff, features, truth.utilization, prior))
             learned = true;
     };
 
@@ -227,14 +227,14 @@ void TrayApp::trainCalibration(const ScanResult &result)
         return;
 
     m_scanner->setCalibration(m_calibration);
-    UsageCalibrator::saveTo("calibration", m_calibration);
+    QuotaCalibrator::saveTo("calibration", m_calibration);
 
-    qDebug() << "[TrayApp] 보정 학습 samples 5h=" << m_calibration.fiveHour.samples
+    qDebug() << "[TrayController] 보정 학습 samples 5h=" << m_calibration.fiveHour.samples
              << "7d=" << m_calibration.sevenDay.samples
              << "7dSonnet=" << m_calibration.sevenDaySonnet.samples;
 }
 
-void TrayApp::updateCountdowns()
+void TrayController::updateCountdowns()
 {
     if (!m_current.fetchedAt.isValid())
         return;
@@ -245,7 +245,7 @@ void TrayApp::updateCountdowns()
     m_popup->refreshNextFetch(m_apiClient->nextScheduledFetchAt());
 }
 
-void TrayApp::updateTooltip()
+void TrayController::updateTooltip()
 {
     auto pct = [](const QuotaInfo &quota) -> QString {
         return quota.valid ? QString("%1%").arg(qRound(quota.utilization * 100.0)) : "--";
@@ -270,7 +270,7 @@ void TrayApp::updateTooltip()
     m_tray->setToolTip(tip);
 }
 
-QIcon TrayApp::makeIcon(double utilization)
+QIcon TrayController::makeIcon(double utilization)
 {
     // tools/gen_icon.py 가 만드는 appicon.ico 와 동일한 도형이다.
     // 한쪽 수치를 바꾸면 다른 쪽도 반드시 맞출 것.
@@ -325,7 +325,7 @@ QIcon TrayApp::makeIcon(double utilization)
     return QIcon(px);
 }
 
-QString TrayApp::formatCountdown(const QDateTime &resetsAt) const
+QString TrayController::formatCountdown(const QDateTime &resetsAt) const
 {
     if (!resetsAt.isValid())
         return "초기화 시각 정보 없음";
@@ -351,13 +351,13 @@ QString TrayApp::formatCountdown(const QDateTime &resetsAt) const
 }
 
 
-void TrayApp::onActivityDetected()
+void TrayController::onActivityDetected()
 {
     m_isActive = true;
     m_popup->setActive();
 }
 
-void TrayApp::onUpdateAvailable(const QString &latestVersion, const QString &downloadUrl)
+void TrayController::onUpdateAvailable(const QString &latestVersion, const QString &downloadUrl)
 {
     m_updateUrl = downloadUrl;
     m_tray->showMessage(
@@ -368,7 +368,7 @@ void TrayApp::onUpdateAvailable(const QString &latestVersion, const QString &dow
     );
 }
 
-void TrayApp::onUpdateNotificationClicked()
+void TrayController::onUpdateNotificationClicked()
 {
     if (!m_updateUrl.isEmpty()) {
         QDesktopServices::openUrl(QUrl(m_updateUrl));

@@ -1,7 +1,7 @@
 #include <QApplication>
 #include <QSystemTrayIcon>
 #include <QMessageBox>
-#include "trayapp.h"
+#include "TrayController.h"
 
 #ifdef Q_OS_WIN
 #include <qt_windows.h>
@@ -31,6 +31,6 @@ int main(int argc, char *argv[])
         return 1;
     }
 
-    TrayApp tray;
+    TrayController tray;
     return app.exec();
 }

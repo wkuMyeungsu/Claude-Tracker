@@ -1,5 +1,5 @@
-#ifndef USAGEDATA_H
-#define USAGEDATA_H
+#ifndef USAGETYPES_H
+#define USAGETYPES_H
 
 // 사용량 경고 임계값 (공통)
 #define USAGE_WARN_PCT 71   // 71% 이상 → 주황
@@ -10,7 +10,7 @@
 struct QuotaInfo {
     double    utilization = 0.0;  // 0.0 ~ 1.0
     QDateTime resetsAt;
-    // 아래 둘은 UsageMerge::mergeQuota 가 API 정확값에 로컬 델타를 더할 때 쓴다.
+    // 아래 둘은 UsageMerger::mergeQuota 가 API 정확값에 로컬 델타를 더할 때 쓴다.
     // (화면에는 utilization 만 나가고 토큰 수 자체는 표시하지 않는다.)
     qint64    rawTokens  = 0;     // 가중 적용된 토큰 수
     qint64    limitTokens = 0;    // 비교 기준 한도
@@ -36,4 +36,4 @@ struct UsageData {
     bool      fromApi = false;   // true=API 정확값, false=로컬 추정
 };
 
-#endif // USAGEDATA_H
+#endif // USAGETYPES_H

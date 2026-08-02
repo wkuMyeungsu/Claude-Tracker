@@ -134,27 +134,53 @@ cpack          # claude-tracker-<버전>-win64.msi / .zip 생성
 앱/트레이 아이콘은 두 곳에 같은 도형이 정의되어 있어 **함께** 고쳐야 합니다.
 
 ```bash
-python tools/gen_icon.py    # appicon.ico 재생성 (pillow 필요)
+python tools/gen_icon.py    # resources/appicon.ico 재생성 (pillow 필요)
 ```
 
-- `tools/gen_icon.py` → `appicon.ico` (exe·시작 메뉴 아이콘)
-- `trayapp.cpp`의 `makeIcon()` → 트레이 아이콘 (사용량에 따라 채움량·색 변화)
+- `tools/gen_icon.py` → `resources/appicon.ico` (exe·시작 메뉴 아이콘)
+- `src/app/TrayController.cpp`의 `makeIcon()` → 트레이 아이콘 (사용량에 따라 채움량·색 변화)
 
 ---
 
 ## 파일 구조
 
-- `model_pricing.json`: 최신 Claude 모델들의 단가 요율 설정 파일 (비용 계산용)
-- `credentialsreader.h/cpp`: Claude Code의 로그인 정보를 읽어오는 역할
-- `usageapiclient.h/cpp`: Claude API 서버와 통신하여 실시간 사용량을 조회하는 역할
-- `usagescanner.h/cpp`: 로컬 JSONL 대화 로그 파일을 실시간으로 감시하고 비용을 역산하는 역할
-- `usagemerge.h/cpp`: 마지막 API 정확값에 로컬 증분을 얹는 병합 로직 (GUI 비의존 순수 함수)
-- `usagecalibrator.h/cpp`: API 실제 사용률을 정답지 삼아 "토큰 1개당 할당량" 계수를 모델 계열별로 온라인 학습하는 보정기 (쓸수록 로컬 추정이 정확해짐)
-- `trayapp.h/cpp`: 시스템 트레이 아이콘을 구성하고 프로그램 전체 흐름을 관리하는 역할
-- `usagepopup.h/cpp`: 트레이 아이콘 클릭 시 발생하는 사용량 대시보드 창 UI
-- `quotapanel.h/cpp`: 사용량 게이지바와 임계 경고선 작업을 처리하는 위젯
-- `toggleswitch.h/cpp`: ON/OFF 스위치 컴포넌트
-- `appicon.ico` / `appicon.rc`: exe에 삽입되는 아이콘 리소스 (탐색기·시작 메뉴 표시용)
+책임에 따라 네 계층으로 나눠 두었습니다. **경로만 보고 UI인지 계산 로직인지
+알 수 있는 것**이 이 구성의 목적입니다.
+
+```
+src/
+  core/   순수 계산 — Qt Widgets·네트워크 비의존. 테스트가 링크하는 곳
+  data/   외부 입력 — 파일·네트워크·자격 증명
+  ui/     화면
+  app/    조립·흐름 제어
+```
+
+### `src/core` — 순수 계산
+
+- `UsageTypes.h`: 계층 간에 오가는 자료형 (`QuotaInfo`, `UsageData` 등)
+- `UsageMerger.h/cpp`: 마지막 API 정확값에 로컬 증분을 얹는 병합 로직
+- `QuotaCalibrator.h/cpp`: API 실제 사용률을 정답지 삼아 "토큰 1개당 할당량" 계수를 모델 계열별로 온라인 학습하는 보정기 (쓸수록 로컬 추정이 정확해짐)
+
+### `src/data` — 외부 입력
+
+- `CredentialsReader.h/cpp`: Claude Code의 로그인 정보를 읽어오는 역할
+- `UsageApiClient.h/cpp`: Claude API 서버와 통신하여 실시간 사용량을 조회하는 역할
+- `UsageScanner.h/cpp`: 로컬 JSONL 대화 로그를 감시·파싱하고 사용량을 집계하는 역할
+
+### `src/ui` — 화면
+
+- `UsageWindow.h/cpp`: 트레이 아이콘 클릭 시 뜨는 사용량 대시보드 창
+- `QuotaGauge.h/cpp`: 사용량 게이지바와 임계 경고선을 그리는 위젯
+- `ToggleSwitch.h/cpp`: ON/OFF 스위치 컴포넌트
+
+### `src/app` — 조립
+
+- `TrayController.h/cpp`: 트레이 아이콘을 구성하고 프로그램 전체 흐름을 관리
+
+### 그 외
+
+- `resources/model_pricing.json`: Claude 모델별 단가 요율 (비용 계산용)
+- `resources/appicon.ico` / `appicon.rc`: exe에 삽입되는 아이콘 리소스
 - `tools/gen_icon.py`: `appicon.ico` 생성 스크립트
 - `tests/`: 시간 윈도우 집계·병합·요율 매칭 단위 테스트 (Qt Test)
 

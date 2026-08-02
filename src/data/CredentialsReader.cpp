@@ -1,4 +1,4 @@
-#include "credentialsreader.h"
+#include "CredentialsReader.h"
 #include <QDir>
 #include <QFile>
 #include <QJsonDocument>

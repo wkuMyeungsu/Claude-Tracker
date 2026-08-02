@@ -14,39 +14,54 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 find_package(QT NAMES Qt6 Qt5 REQUIRED COMPONENTS Widgets Network Concurrent)
 find_package(Qt${QT_VERSION_MAJOR} REQUIRED COMPONENTS Widgets Network Concurrent)
 
+# 계층별로 나눠 둔다. core 는 Qt Widgets 에 의존하지 않는 순수 계산이라
+# 테스트 타깃이 그대로 링크할 수 있고, ui 는 화면만, data 는 외부 입력만 다룬다.
+set(CORE_SOURCES        # 순수 계산 — GUI·네트워크 비의존
+    src/core/UsageTypes.h
+    src/core/UsageMerger.h
+    src/core/UsageMerger.cpp
+    src/core/QuotaCalibrator.h
+    src/core/QuotaCalibrator.cpp
+)
+set(DATA_SOURCES        # 외부 입력 — 파일·네트워크·자격증명
+    src/data/CredentialsReader.h
+    src/data/CredentialsReader.cpp
+    src/data/UsageApiClient.h
+    src/data/UsageApiClient.cpp
+    src/data/UsageScanner.h
+    src/data/UsageScanner.cpp
+)
+set(UI_SOURCES          # 화면
+    src/ui/QuotaGauge.h
+    src/ui/QuotaGauge.cpp
+    src/ui/UsageWindow.h
+    src/ui/UsageWindow.cpp
+    src/ui/ToggleSwitch.h
+    src/ui/ToggleSwitch.cpp
+)
+set(APP_SOURCES         # 조립·흐름 제어
+    src/app/TrayController.h
+    src/app/TrayController.cpp
+)
+
 set(PROJECT_SOURCES
-    main.cpp
-    usagedata.h
-    credentialsreader.h
-    credentialsreader.cpp
-    usageapiclient.h
-    usageapiclient.cpp
-    usagescanner.h
-    usagescanner.cpp
-    usagemerge.h
-    usagemerge.cpp
-    usagecalibrator.h
-    usagecalibrator.cpp
-    quotapanel.h
-    quotapanel.cpp
-    trayapp.h
-    trayapp.cpp
-    usagepopup.h
-    usagepopup.cpp
-    toggleswitch.h
-    toggleswitch.cpp
-    resources.qrc
+    src/main.cpp
+    ${CORE_SOURCES}
+    ${DATA_SOURCES}
+    ${UI_SOURCES}
+    ${APP_SOURCES}
+    resources/resources.qrc
 )
 
 # exe 에 아이콘 리소스를 심는다. 없으면 탐색기/시작 메뉴에서 Windows 기본
 # 아이콘으로 표시된다. 시작 메뉴 바로가기도 이 임베드 아이콘을 따라간다.
 if(WIN32)
-    list(APPEND PROJECT_SOURCES appicon.rc)
+    list(APPEND PROJECT_SOURCES resources/appicon.rc)
     # .rc 가 참조하는 .ico 는 빌드 시스템이 자동으로 추적하지 못한다.
     # 명시하지 않으면 아이콘만 교체했을 때 재컴파일되지 않아
     # exe 에 옛 아이콘이 그대로 남는다.
-    set_source_files_properties(appicon.rc PROPERTIES
-        OBJECT_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/appicon.ico")
+    set_source_files_properties(resources/appicon.rc PROPERTIES
+        OBJECT_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/resources/appicon.ico")
 endif()
 
 if(${QT_VERSION_MAJOR} GREATER_EQUAL 6)
@@ -65,6 +80,15 @@ endif()
 # 업데이트 체크와 User-Agent 가 쓰는 현재 버전. 소스에 하드코딩하면
 # 버전을 올릴 때 자기 자신을 최신으로 오인해 알림이 뜨지 않는다.
 target_compile_definitions(ClaudeTray PRIVATE APP_VERSION="${PROJECT_VERSION}")
+
+# 계층 간 include 는 "UsageTypes.h" 처럼 파일명만 쓴다. 디렉터리를 옮겨도
+# 상대 경로("../core/...")가 줄줄이 깨지지 않게 하기 위함이다.
+target_include_directories(ClaudeTray PRIVATE
+    src/core
+    src/data
+    src/ui
+    src/app
+)
 
 target_link_libraries(ClaudeTray PRIVATE
     Qt${QT_VERSION_MAJOR}::Widgets      # QSystemTrayIcon, QMenu, QProgressBar
@@ -222,7 +246,7 @@ if(WIN32)
     set(CPACK_WIX_UPGRADE_GUID "9B5C7BFF-E32D-4B51-A4E1-23F67D7D1234")
     set(CPACK_WIX_ROOT_FEATURE_TITLE "Claude Tracker")
     # 제어판 '프로그램 및 기능' 목록에 표시될 아이콘
-    set(CPACK_WIX_PRODUCT_ICON "${CMAKE_CURRENT_SOURCE_DIR}/appicon.ico")
+    set(CPACK_WIX_PRODUCT_ICON "${CMAKE_CURRENT_SOURCE_DIR}/resources/appicon.ico")
     # 시작 메뉴 바로가기 (exe 이름, 표시 이름)
     set(CPACK_PACKAGE_EXECUTABLES "ClaudeTray" "Claude Tracker")
     set(CPACK_CREATE_DESKTOP_LINKS "ClaudeTray")

@@ -1,8 +1,8 @@
-#ifndef QUOTAPANEL_H
-#define QUOTAPANEL_H
+#ifndef QUOTAGAUGE_H
+#define QUOTAGAUGE_H
 
 #include <QWidget>
-#include "usagedata.h"
+#include "UsageTypes.h"
 
 class QLabel;
 class QPropertyAnimation;
@@ -34,11 +34,11 @@ private:
     QPropertyAnimation *m_fadeAnim    = nullptr;
 };
 
-class QuotaPanel : public QWidget
+class QuotaGauge : public QWidget
 {
     Q_OBJECT
 public:
-    explicit QuotaPanel(const QString &title, QWidget *parent = nullptr);
+    explicit QuotaGauge(const QString &title, QWidget *parent = nullptr);
 
     void setData(const QuotaInfo &info);
     void setCountdown(const QString &text);
@@ -50,4 +50,4 @@ private:
     QLabel       *m_resetLabel;
 };
 
-#endif // QUOTAPANEL_H
+#endif // QUOTAGAUGE_H

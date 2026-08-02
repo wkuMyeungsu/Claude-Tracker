@@ -5,8 +5,8 @@
 #include <QObject>
 #include <QSet>
 #include <QVector>
-#include "usagedata.h"
-#include "usagecalibrator.h"
+#include "UsageTypes.h"
+#include "QuotaCalibrator.h"
 
 class QFileSystemWatcher;
 class QTimer;

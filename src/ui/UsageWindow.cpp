@@ -1,7 +1,7 @@
-#include "usagepopup.h"
-#include "quotapanel.h"
+#include "UsageWindow.h"
+#include "QuotaGauge.h"
 #include <QApplication>
-#include "toggleswitch.h"
+#include "ToggleSwitch.h"
 #include <QEasingCurve>
 #include <QFrame>
 #include <QHBoxLayout>
@@ -19,7 +19,7 @@
 #include <QPainter>
 
 
-UsagePopup::UsagePopup(QWidget *parent)
+UsageWindow::UsageWindow(QWidget *parent)
     : QWidget(parent, Qt::Tool | Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint)
 {
     setFixedWidth(280);
@@ -119,8 +119,8 @@ UsagePopup::UsagePopup(QWidget *parent)
     titleRow->addStretch();
     titleRow->addWidget(minimizeBtn);
 
-    m_panel5h = new QuotaPanel("5h 사용량");
-    m_panel7d = new QuotaPanel("7d 사용량");
+    m_panel5h = new QuotaGauge("5h 사용량");
+    m_panel7d = new QuotaGauge("7d 사용량");
 
     m_sep1 = new QFrame; m_sep1->setFrameShape(QFrame::HLine); m_sep1->setStyleSheet("color: #444;");
     m_sep2 = new QFrame; m_sep2->setFrameShape(QFrame::HLine); m_sep2->setStyleSheet("color: #ddd;");
@@ -249,7 +249,7 @@ UsagePopup::UsagePopup(QWidget *parent)
 
     m_justRefreshedTimer = new QTimer(this);
     m_justRefreshedTimer->setSingleShot(true);
-    connect(m_justRefreshedTimer, &QTimer::timeout, this, &UsagePopup::updateStatusLine);
+    connect(m_justRefreshedTimer, &QTimer::timeout, this, &UsageWindow::updateStatusLine);
 
     m_fadeTimer = new QTimer(this);
     m_fadeTimer->setSingleShot(true);
@@ -280,8 +280,8 @@ UsagePopup::UsagePopup(QWidget *parent)
     root->addWidget(m_titleBar);
     root->addWidget(m_collapsingBody);
 
-    setObjectName("UsagePopup");
-    setStyleSheet("#UsagePopup { background: white; border-radius: 8px; border: 1px solid #cccccc; }");
+    setObjectName("UsageWindow");
+    setStyleSheet("#UsageWindow { background: white; border-radius: 8px; border: 1px solid #cccccc; }");
 
     m_opacityAnim = new QPropertyAnimation(this, "windowOpacity", this);
     m_opacityAnim->setDuration(300);
@@ -289,7 +289,7 @@ UsagePopup::UsagePopup(QWidget *parent)
 
 }
 
-void UsagePopup::setData(const UsageData &data)
+void UsageWindow::setData(const UsageData &data)
 {
     if (m_isDragging) {
         m_pendingData     = data;
@@ -299,7 +299,7 @@ void UsagePopup::setData(const UsageData &data)
     applyDataInternal(data);
 }
 
-void UsagePopup::setCountdowns(const QString &c5h, const QString &c7d)
+void UsageWindow::setCountdowns(const QString &c5h, const QString &c7d)
 {
     if (m_isDragging) {
         m_pendingC5h  = c5h;
@@ -310,7 +310,7 @@ void UsagePopup::setCountdowns(const QString &c5h, const QString &c7d)
     applyCountdownsInternal(c5h, c7d);
 }
 
-void UsagePopup::setRefreshState(RefreshState state, QDateTime lastFetch, QDateTime nextFetch)
+void UsageWindow::setRefreshState(RefreshState state, QDateTime lastFetch, QDateTime nextFetch)
 {
     if (m_isDragging) {
         m_hasPendingRefreshState = true;
@@ -333,7 +333,7 @@ void UsagePopup::setRefreshState(RefreshState state, QDateTime lastFetch, QDateT
     updateStatusLine();
 }
 
-void UsagePopup::refreshNextFetch(QDateTime nextFetch)
+void UsageWindow::refreshNextFetch(QDateTime nextFetch)
 {
     m_nextFetch = nextFetch;
     updateStatusLine();
@@ -360,7 +360,7 @@ static QString fmtIn(const QDateTime &dt)
 }
 
 
-void UsagePopup::updateStatusLine()
+void UsageWindow::updateStatusLine()
 {
     QString text;
     switch (m_refreshState) {
@@ -390,7 +390,7 @@ void UsagePopup::updateStatusLine()
     m_statusLine->setText(text);
 }
 
-void UsagePopup::paintEvent(QPaintEvent *event)
+void UsageWindow::paintEvent(QPaintEvent *event)
 {
     Q_UNUSED(event);
     QStyleOption opt;
@@ -399,7 +399,7 @@ void UsagePopup::paintEvent(QPaintEvent *event)
     style()->drawPrimitive(QStyle::PE_Widget, &opt, &p, this);
 }
 
-void UsagePopup::animateOpacityTo(double target)
+void UsageWindow::animateOpacityTo(double target)
 {
     m_opacityAnim->stop();
     m_opacityAnim->setStartValue(windowOpacity());
@@ -407,7 +407,7 @@ void UsagePopup::animateOpacityTo(double target)
     m_opacityAnim->start();
 }
 
-void UsagePopup::applyDataInternal(const UsageData &data)
+void UsageWindow::applyDataInternal(const UsageData &data)
 {
     m_panel5h->setData(data.fiveHour);
     m_panel7d->setData(data.sevenDay);
@@ -451,13 +451,13 @@ void UsagePopup::applyDataInternal(const UsageData &data)
     }
 }
 
-void UsagePopup::applyCountdownsInternal(const QString &c5h, const QString &c7d)
+void UsageWindow::applyCountdownsInternal(const QString &c5h, const QString &c7d)
 {
     m_panel5h->setCountdown(c5h);
     m_panel7d->setCountdown(c7d);
 }
 
-void UsagePopup::applyPending()
+void UsageWindow::applyPending()
 {
     if (m_hasPendingData) {
         applyDataInternal(m_pendingData);
@@ -481,7 +481,7 @@ void UsagePopup::applyPending()
     }
 }
 
-bool UsagePopup::eventFilter(QObject *obj, QEvent *event)
+bool UsageWindow::eventFilter(QObject *obj, QEvent *event)
 {
     if (obj != m_titleBar)
         return QWidget::eventFilter(obj, event);
@@ -514,7 +514,7 @@ bool UsagePopup::eventFilter(QObject *obj, QEvent *event)
     return QWidget::eventFilter(obj, event);
 }
 
-void UsagePopup::setActive()
+void UsageWindow::setActive()
 {
     m_fadeTimer->stop();  // 대기 중인 투명화 타이머 취소
     m_idleMode      = false;
@@ -529,7 +529,7 @@ void UsagePopup::setActive()
     animateOpacityTo(1.0);
 }
 
-void UsagePopup::setIdle()
+void UsageWindow::setIdle()
 {
     if (m_idleMode) return;
     m_idleMode = true;
@@ -541,14 +541,14 @@ void UsagePopup::setIdle()
     m_fadeTimer->start();  // 10s 후 투명화 (이미 대기 중이면 재시작)
 }
 
-void UsagePopup::hideEvent(QHideEvent *event)
+void UsageWindow::hideEvent(QHideEvent *event)
 {
     m_opacityAnim->stop();
     setWindowOpacity(1.0);  // 다음 show() 시 항상 불투명에서 시작
     QWidget::hideEvent(event);
 }
 
-void UsagePopup::showNearTray(const QPoint &trayPos)
+void UsageWindow::showNearTray(const QPoint &trayPos)
 {
     adjustSize();
     const int w = width();
@@ -584,7 +584,7 @@ void UsagePopup::showNearTray(const QPoint &trayPos)
         QTimer::singleShot(500, this, [this]() { if (isVisible() && m_pinBtn->isChecked() && m_autoFade) animateOpacityTo(0.6); });
 }
 
-void UsagePopup::hideAndSavePos()
+void UsageWindow::hideAndSavePos()
 {
     m_rememberedPos    = pos();
     m_hasRememberedPos = true;

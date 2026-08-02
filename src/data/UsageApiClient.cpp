@@ -1,5 +1,5 @@
-#include "usageapiclient.h"
-#include "credentialsreader.h"
+#include "UsageApiClient.h"
+#include "CredentialsReader.h"
 #include <cmath>
 #include <QJsonDocument>
 #include <QJsonObject>

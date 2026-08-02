@@ -1,5 +1,5 @@
-#ifndef USAGECALIBRATOR_H
-#define USAGECALIBRATOR_H
+#ifndef QUOTACALIBRATOR_H
+#define QUOTACALIBRATOR_H
 
 #include <QString>
 
@@ -53,7 +53,7 @@ struct CalibrationSet {
     QuotaCoefficients sevenDaySonnet;
 };
 
-namespace UsageCalibrator {
+namespace QuotaCalibrator {
 
 // 하드코딩 플랜 한도에서 출발하는 초기 계수.
 // input/output/cacheWrite 는 1/limit, cacheRead 는 0.1/limit —
@@ -73,6 +73,6 @@ bool observe(QuotaCoefficients &coeff, const UsageFeatures &features,
 void saveTo(const QString &group, const CalibrationSet &set);
 bool loadFrom(const QString &group, CalibrationSet &set);
 
-} // namespace UsageCalibrator
+} // namespace QuotaCalibrator
 
-#endif // USAGECALIBRATOR_H
+#endif // QUOTACALIBRATOR_H

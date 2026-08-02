@@ -1,4 +1,4 @@
-#include "quotapanel.h"
+#include "QuotaGauge.h"
 #include <QLabel>
 #include <QPainter>
 #include <QPen>
@@ -107,9 +107,9 @@ void ThresholdBar::paintEvent(QPaintEvent *)
 
 }
 
-// ── QuotaPanel ────────────────────────────────────────────────────────────────
+// ── QuotaGauge ────────────────────────────────────────────────────────────────
 
-QuotaPanel::QuotaPanel(const QString &title, QWidget *parent)
+QuotaGauge::QuotaGauge(const QString &title, QWidget *parent)
     : QWidget(parent)
 {
     setFixedWidth(250);
@@ -141,7 +141,7 @@ QuotaPanel::QuotaPanel(const QString &title, QWidget *parent)
     root->addWidget(m_resetLabel);
 }
 
-void QuotaPanel::setData(const QuotaInfo &info)
+void QuotaGauge::setData(const QuotaInfo &info)
 {
     if (!info.valid) {
         m_pctLabel->setText("--");
@@ -155,16 +155,16 @@ void QuotaPanel::setData(const QuotaInfo &info)
     m_pctLabel->setText(QString("%1%").arg(pct));
     m_bar->setValue(pct);
 
-    // m_resetLabel 은 여기서 건드리지 않는다. 호출측(TrayApp::applyData)이
+    // m_resetLabel 은 여기서 건드리지 않는다. 호출측(TrayController::applyData)이
     // setData 직후 항상 setCountdown 으로 덮어쓰므로 여기서 쓴 값은 보이지 않는다.
 }
 
-void QuotaPanel::setCountdown(const QString &text)
+void QuotaGauge::setCountdown(const QString &text)
 {
     m_resetLabel->setText(text);
 }
 
-void QuotaPanel::setActive(bool active)
+void QuotaGauge::setActive(bool active)
 {
     m_bar->setActive(active);
 }

@@ -1,25 +1,25 @@
-#ifndef TRAYAPP_H
-#define TRAYAPP_H
+#ifndef TRAYCONTROLLER_H
+#define TRAYCONTROLLER_H
 
 #include <QObject>
 #include <QSystemTrayIcon>
-#include "usagedata.h"
-#include "usagescanner.h"
+#include "UsageTypes.h"
+#include "UsageScanner.h"
 
 class QMenu;
 class QTimer;
 class UsageApiClient;
-class UsagePopup;
+class UsageWindow;
 
-class TrayApp : public QObject
+class TrayController : public QObject
 {
     Q_OBJECT
 public:
-    explicit TrayApp(QObject *parent = nullptr);
-    // m_contextMenu 와 m_popup 은 최상위 QWidget 이라 QObject 인 TrayApp 을
+    explicit TrayController(QObject *parent = nullptr);
+    // m_contextMenu 와 m_popup 은 최상위 QWidget 이라 QObject 인 TrayController 을
     // 부모로 삼을 수 없다. QSystemTrayIcon::setContextMenu 도 소유권을 가져가지
     // 않으므로 여기서 직접 정리해야 한다.
-    ~TrayApp() override;
+    ~TrayController() override;
 
 private slots:
     void onUsageFetched(UsageData data);
@@ -42,7 +42,7 @@ private:
 
     QSystemTrayIcon *m_tray = nullptr;
     QMenu *m_contextMenu = nullptr;
-    UsagePopup *m_popup = nullptr;
+    UsageWindow *m_popup = nullptr;
     UsageApiClient *m_apiClient = nullptr;
     UsageScanner *m_scanner = nullptr;
     UsageData m_current;
@@ -62,4 +62,4 @@ private:
     QString m_updateUrl;
 };
 
-#endif // TRAYAPP_H
+#endif // TRAYCONTROLLER_H

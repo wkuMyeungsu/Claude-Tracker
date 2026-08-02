@@ -1,28 +1,28 @@
-#ifndef USAGEPOPUP_H
-#define USAGEPOPUP_H
+#ifndef USAGEWINDOW_H
+#define USAGEWINDOW_H
 
 #include <QWidget>
 #include <QDateTime>
-#include "usagedata.h"
+#include "UsageTypes.h"
 
 class ToggleSwitch;
 class QFrame;
 class QLabel;
 class QPropertyAnimation;
 class QGraphicsOpacityEffect;
-class QuotaPanel;
+class QuotaGauge;
 class ThresholdBar;
 class QWidget;
 class QPushButton;
 class QTimer;
 
-class UsagePopup : public QWidget
+class UsageWindow : public QWidget
 {
     Q_OBJECT
 public:
     enum class RefreshState { Fetching, Refreshed, LocalFallback, NetworkError };
 
-    explicit UsagePopup(QWidget *parent = nullptr);
+    explicit UsageWindow(QWidget *parent = nullptr);
 
     void setData(const UsageData &data);
     void setCountdowns(const QString &c5h, const QString &c7d);
@@ -46,8 +46,8 @@ private:
     void updateStatusLine();
     void applyPending();
 
-    QuotaPanel  *m_panel5h          = nullptr;
-    QuotaPanel  *m_panel7d          = nullptr;
+    QuotaGauge  *m_panel5h          = nullptr;
+    QuotaGauge  *m_panel7d          = nullptr;
     QFrame      *m_sepExtra        = nullptr;
     QWidget     *m_extraWidget     = nullptr;
     QLabel      *m_extraTitleLabel = nullptr;
@@ -96,4 +96,4 @@ private:
     QDateTime    m_pendingNextFetch;
 };
 
-#endif // USAGEPOPUP_H
+#endif // USAGEWINDOW_H

@@ -9,10 +9,10 @@
 #include <QTemporaryDir>
 #include <QTimeZone>
 
-#include "usageapiclient.h"
-#include "usagecalibrator.h"
-#include "usagemerge.h"
-#include "usagescanner.h"
+#include "UsageApiClient.h"
+#include "QuotaCalibrator.h"
+#include "UsageMerger.h"
+#include "UsageScanner.h"
 
 namespace {
 
@@ -30,7 +30,7 @@ QDateTime utc(const QString &iso)
 // 기존 기대값을 그대로 쓸 수 있다.
 CalibrationSet calib(qint64 limit5h = 1'000'000, qint64 limit7d = 10'000'000)
 {
-    return UsageCalibrator::priorsFor(limit5h, limit7d);
+    return QuotaCalibrator::priorsFor(limit5h, limit7d);
 }
 
 TokenRecord rec(const QDateTime &ts, qint64 in, qint64 out,
@@ -104,14 +104,14 @@ private slots:
     void readRecords_parsesCacheCreationAndSpeed();
     void readRecords_ignoresIterationsArray();
 
-    // ── UsageCalibrator ──────────────────────────────────────────────────────
+    // ── QuotaCalibrator ──────────────────────────────────────────────────────
     void calibrator_priorMatchesLegacyFormula();
     void calibrator_convergesTowardObservedUtilization();
     void calibrator_ignoresUnobservableSamples();
     void calibrator_learnsPerFamilyIndependently();
     void calibrator_clampsRunawayCoefficients();
 
-    // ── UsageMerge ───────────────────────────────────────────────────────────
+    // ── UsageMerger ───────────────────────────────────────────────────────────
     void merge_addsDeltaOnTopOfApi();
     void merge_clampsCombinedUtilizationAtOne();
     void merge_dropsStaleApiTokensAfterReset();
@@ -548,7 +548,7 @@ void TestUsageLogic::calibrator_priorMatchesLegacyFormula()
 {
     // prior 는 예전 하드코딩 공식과 정확히 같아야 한다. 그래야 학습 표본이
     // 0 건인 첫 실행에서 화면 숫자가 달라지지 않는다.
-    const QuotaCoefficients p = UsageCalibrator::priorFor(1'000'000);
+    const QuotaCoefficients p = QuotaCalibrator::priorFor(1'000'000);
 
     UsageFeatures f;
     f.add(Calib::Opus, Calib::Input,      100);
@@ -559,13 +559,13 @@ void TestUsageLogic::calibrator_priorMatchesLegacyFormula()
     QCOMPARE(p.predict(f), 260.0 / 1'000'000.0);
 
     // 한도를 모르면 계수가 0 이라 예측도 0 이다.
-    QVERIFY(!UsageCalibrator::priorFor(0).isValid());
+    QVERIFY(!QuotaCalibrator::priorFor(0).isValid());
 }
 
 void TestUsageLogic::calibrator_convergesTowardObservedUtilization()
 {
     // 실제 한도가 prior 의 절반(=토큰당 소모가 2배)인 사용자를 흉내낸다.
-    const QuotaCoefficients prior = UsageCalibrator::priorFor(1'000'000);
+    const QuotaCoefficients prior = QuotaCalibrator::priorFor(1'000'000);
     QuotaCoefficients coeff = prior;
 
     UsageFeatures f;
@@ -575,7 +575,7 @@ void TestUsageLogic::calibrator_convergesTowardObservedUtilization()
     QCOMPARE(coeff.predict(f), 0.20);        // 학습 전에는 20% 로 과소 추정
 
     for (int i = 0; i < 40; ++i)
-        QVERIFY(UsageCalibrator::observe(coeff, f, truth, prior));
+        QVERIFY(QuotaCalibrator::observe(coeff, f, truth, prior));
 
     QCOMPARE(coeff.samples, 40);
     QVERIFY2(qAbs(coeff.predict(f) - truth) < 0.005,
@@ -584,17 +584,17 @@ void TestUsageLogic::calibrator_convergesTowardObservedUtilization()
 
 void TestUsageLogic::calibrator_ignoresUnobservableSamples()
 {
-    const QuotaCoefficients prior = UsageCalibrator::priorFor(1'000'000);
+    const QuotaCoefficients prior = QuotaCalibrator::priorFor(1'000'000);
     QuotaCoefficients coeff = prior;
 
     UsageFeatures f;
     f.add(Calib::Opus, Calib::Input, 100'000);
 
     // 0% 는 신호가 없고, 100% 는 포화라 참값을 알 수 없다.
-    QVERIFY(!UsageCalibrator::observe(coeff, f, 0.0,  prior));
-    QVERIFY(!UsageCalibrator::observe(coeff, f, 1.0,  prior));
+    QVERIFY(!QuotaCalibrator::observe(coeff, f, 0.0,  prior));
+    QVERIFY(!QuotaCalibrator::observe(coeff, f, 1.0,  prior));
     // 토큰이 하나도 없으면 배울 게 없다.
-    QVERIFY(!UsageCalibrator::observe(coeff, UsageFeatures(), 0.5, prior));
+    QVERIFY(!QuotaCalibrator::observe(coeff, UsageFeatures(), 0.5, prior));
 
     QCOMPARE(coeff.samples, 0);
 }
@@ -602,14 +602,14 @@ void TestUsageLogic::calibrator_ignoresUnobservableSamples()
 void TestUsageLogic::calibrator_learnsPerFamilyIndependently()
 {
     // Opus 만 쓴 관측으로는 Haiku 계수가 움직이면 안 된다.
-    const QuotaCoefficients prior = UsageCalibrator::priorFor(1'000'000);
+    const QuotaCoefficients prior = QuotaCalibrator::priorFor(1'000'000);
     QuotaCoefficients coeff = prior;
     const double haikuBefore = coeff.c[Calib::Haiku][Calib::Input];
 
     UsageFeatures opusOnly;
     opusOnly.add(Calib::Opus, Calib::Input, 300'000);
     for (int i = 0; i < 20; ++i)
-        UsageCalibrator::observe(coeff, opusOnly, 0.60, prior);
+        QuotaCalibrator::observe(coeff, opusOnly, 0.60, prior);
 
     QVERIFY(coeff.c[Calib::Opus][Calib::Input] > prior.c[Calib::Opus][Calib::Input]);
     QCOMPARE(coeff.c[Calib::Haiku][Calib::Input], haikuBefore);
@@ -619,13 +619,13 @@ void TestUsageLogic::calibrator_clampsRunawayCoefficients()
 {
     // 로컬 로그가 크게 유실된 상황(토큰은 조금인데 API 는 90%)에서도
     // 계수가 무한정 커지면 안 된다.
-    const QuotaCoefficients prior = UsageCalibrator::priorFor(1'000'000);
+    const QuotaCoefficients prior = QuotaCalibrator::priorFor(1'000'000);
     QuotaCoefficients coeff = prior;
 
     UsageFeatures tiny;
     tiny.add(Calib::Opus, Calib::Input, 1'000);
     for (int i = 0; i < 500; ++i)
-        UsageCalibrator::observe(coeff, tiny, 0.90, prior);
+        QuotaCalibrator::observe(coeff, tiny, 0.90, prior);
 
     QVERIFY(coeff.c[Calib::Opus][Calib::Input]
             <= prior.c[Calib::Opus][Calib::Input] * 20.0 + 1e-12);
@@ -663,7 +663,7 @@ void TestUsageLogic::merge_addsDeltaOnTopOfApi()
     delta.fiveHour.utilization = 0.10;
     delta.fiveHour.rawTokens   = 100'000;
 
-    const UsageData merged = UsageMerge::mergeWithLastApi(api, delta, now);
+    const UsageData merged = UsageMerger::mergeWithLastApi(api, delta, now);
 
     // 한도 추정을 두 번 곱하지 않고 비율끼리 더한다.
     QCOMPARE(merged.fiveHour.utilization, 0.6);
@@ -679,7 +679,7 @@ void TestUsageLogic::merge_clampsCombinedUtilizationAtOne()
     delta.fiveHour.valid       = true;
     delta.fiveHour.utilization = 0.40;
 
-    const UsageData merged = UsageMerge::mergeWithLastApi(api, delta, now);
+    const UsageData merged = UsageMerger::mergeWithLastApi(api, delta, now);
     QCOMPARE(merged.fiveHour.utilization, 1.0);
 }
 
@@ -694,7 +694,7 @@ void TestUsageLogic::merge_dropsStaleApiTokensAfterReset()
     delta.fiveHour.utilization = 0.02;
     delta.fiveHour.rawTokens   = 20'000;
 
-    const UsageData merged = UsageMerge::mergeWithLastApi(api, delta, now);
+    const UsageData merged = UsageMerger::mergeWithLastApi(api, delta, now);
 
     QCOMPARE(merged.fiveHour.utilization, 0.02);   // 0.92 가 아니라 델타만
     QCOMPARE(merged.fiveHour.rawTokens, 20'000);
@@ -709,7 +709,7 @@ void TestUsageLogic::merge_refreshesResetsAtAfterReset()
                                       0.3, utc("2026-07-30T00:00:00"));
 
     const UsageData merged =
-        UsageMerge::mergeWithLastApi(api, UsageData(), now);
+        UsageMerger::mergeWithLastApi(api, UsageData(), now);
 
     QCOMPARE(merged.fiveHour.resetsAt, utc("2026-08-02T16:00:00"));
     QVERIFY(merged.fiveHour.resetsAt > now);
@@ -746,7 +746,7 @@ void TestUsageLogic::merge_extraCreditOnlyWhenApiEnabledIt()
     UsageData apiOff = makeSaturatedApi(utc("2026-08-02T15:00:00"));
     apiOff.extraUsage.enabled = false;
     const UsageData mergedOff =
-        UsageMerge::mergeWithLastApi(apiOff, delta, now);
+        UsageMerger::mergeWithLastApi(apiOff, delta, now);
     QVERIFY(!mergedOff.extraUsage.enabled);
     QCOMPARE(mergedOff.extraUsage.usedCredits, 0.0);
 
@@ -756,7 +756,7 @@ void TestUsageLogic::merge_extraCreditOnlyWhenApiEnabledIt()
     apiOn.extraUsage.usedCredits  = 8.50;
     apiOn.extraUsage.limitDollars = 20.00;
     const UsageData mergedOn =
-        UsageMerge::mergeWithLastApi(apiOn, delta, now);
+        UsageMerger::mergeWithLastApi(apiOn, delta, now);
     QVERIFY(mergedOn.extraUsage.enabled);
     QCOMPARE(mergedOn.extraUsage.usedCredits, 10.00);
     QCOMPARE(mergedOn.extraUsage.utilization, 0.5);
@@ -775,7 +775,7 @@ void TestUsageLogic::merge_extraCreditResetsOnMonthRollover()
     api.extraUsage.limitDollars   = 20.00;
 
     const UsageData merged =
-        UsageMerge::mergeWithLastApi(api, makeOverageDelta(0.75), now);
+        UsageMerger::mergeWithLastApi(api, makeOverageDelta(0.75), now);
     QCOMPARE(merged.extraUsage.usedCredits, 0.75);   // 18.75 가 아니다
 }
 
@@ -791,7 +791,7 @@ void TestUsageLogic::merge_extraCreditKeepsBaselineWhenFetchedAtUnknown()
     api.extraUsage.usedCredits = 4.00;
 
     const UsageData merged =
-        UsageMerge::mergeWithLastApi(api, makeOverageDelta(1.00), now);
+        UsageMerger::mergeWithLastApi(api, makeOverageDelta(1.00), now);
     QCOMPARE(merged.extraUsage.usedCredits, 5.00);
 }
 
@@ -803,7 +803,7 @@ void TestUsageLogic::charge_nothingWhileUnderQuota()
     QuotaInfo api;   api.valid = true;   api.utilization = 0.40;
     QuotaInfo delta; delta.valid = true; delta.utilization = 0.10;
 
-    QCOMPARE(UsageMerge::chargeableRatioFor(api, delta, false), 0.0);
+    QCOMPARE(UsageMerger::chargeableRatioFor(api, delta, false), 0.0);
 }
 
 void TestUsageLogic::charge_onlyTheOveragePortion()
@@ -812,11 +812,11 @@ void TestUsageLogic::charge_onlyTheOveragePortion()
     QuotaInfo api;   api.valid = true;   api.utilization = 0.95;
     QuotaInfo delta; delta.valid = true; delta.utilization = 0.10;
 
-    QCOMPARE(UsageMerge::chargeableRatioFor(api, delta, false), 0.5);
+    QCOMPARE(UsageMerger::chargeableRatioFor(api, delta, false), 0.5);
 
     // 이미 100% 였다면 델타 전액이 크레딧에서 나간다.
     api.utilization = 1.0;
-    QCOMPARE(UsageMerge::chargeableRatioFor(api, delta, false), 1.0);
+    QCOMPARE(UsageMerger::chargeableRatioFor(api, delta, false), 1.0);
 }
 
 void TestUsageLogic::charge_weeklyQuotaAloneCanTriggerBilling()
@@ -831,8 +831,8 @@ void TestUsageLogic::charge_weeklyQuotaAloneCanTriggerBilling()
     delta.fiveHour.valid       = true; delta.fiveHour.utilization = 0.05;
     delta.sevenDay.valid       = true; delta.sevenDay.utilization = 0.02;
 
-    QCOMPARE(UsageMerge::chargeableRatioFor(api.fiveHour, delta.fiveHour, false), 0.0);
-    QCOMPARE(UsageMerge::chargeableRatio(api, delta, false, false), 1.0);
+    QCOMPARE(UsageMerger::chargeableRatioFor(api.fiveHour, delta.fiveHour, false), 0.0);
+    QCOMPARE(UsageMerger::chargeableRatio(api, delta, false, false), 1.0);
 }
 
 void TestUsageLogic::charge_keepsPreResetOverageWhenWindowRolled()
@@ -842,11 +842,11 @@ void TestUsageLogic::charge_keepsPreResetOverageWhenWindowRolled()
     // 그 지출은 실제로 크레딧에서 나갔으므로 버리면 안 된다.
     QuotaInfo saturated; saturated.valid = true; saturated.utilization = 1.0;
     QuotaInfo delta;     delta.valid = true;     delta.utilization = 0.03;
-    QCOMPARE(UsageMerge::chargeableRatioFor(saturated, delta, true), 1.0);
+    QCOMPARE(UsageMerger::chargeableRatioFor(saturated, delta, true), 1.0);
 
     // 반대로 리셋 직전에도 한도 안이었다면 청구할 게 없다.
     QuotaInfo relaxed; relaxed.valid = true; relaxed.utilization = 0.30;
-    QCOMPARE(UsageMerge::chargeableRatioFor(relaxed, delta, true), 0.0);
+    QCOMPARE(UsageMerger::chargeableRatioFor(relaxed, delta, true), 0.0);
 }
 
 void TestUsageLogic::charge_defaultsToFullWhenNoQuotaKnown()
@@ -855,9 +855,9 @@ void TestUsageLogic::charge_defaultsToFullWhenNoQuotaKnown()
     // 어차피 다음 API 응답이 정확값으로 덮어쓴다.
     QuotaInfo invalid;                       // valid == false
     QuotaInfo delta; delta.valid = true; delta.utilization = 0.10;
-    QVERIFY(UsageMerge::chargeableRatioFor(invalid, delta, false) < 0.0);
+    QVERIFY(UsageMerger::chargeableRatioFor(invalid, delta, false) < 0.0);
 
-    QCOMPARE(UsageMerge::chargeableRatio(UsageData(), UsageData(), false, false), 1.0);
+    QCOMPARE(UsageMerger::chargeableRatio(UsageData(), UsageData(), false, false), 1.0);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -887,4 +887,4 @@ void TestUsageLogic::versionCompare()
 }
 
 QTEST_GUILESS_MAIN(TestUsageLogic)
-#include "tst_usagelogic.moc"
+#include "UsageLogicTest.moc"
