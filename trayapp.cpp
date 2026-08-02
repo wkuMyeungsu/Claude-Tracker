@@ -85,6 +85,7 @@ void TrayApp::onUsageFetched(UsageData data)
 {
     m_apiFailed = false;
     m_lastFetchError.clear();
+    m_resetFetchRequested = false;
     m_current = data;
     m_lastApiData = data;
     m_hasLastApiData = true;
@@ -134,11 +135,15 @@ void TrayApp::onLocalUsage(UsageData full, UsageData delta, bool hasDelta)
         m_popup->setRefreshState(UsagePopup::RefreshState::LocalFallback);
 
     // 마지막 API resetsAt 가 이미 지났으면 즉시 재호출 → 정확한 새 리셋 시각 수신
-    if (m_hasLastApiData) {
+    // 단, 이미 요청했으면 중복 호출하지 않는다. 매 스캔마다 fetchUsage 를 부르면
+    // 스트리밍 중 초당 수십 건의 요청이 발생해 API 스팸이 된다.
+    if (m_hasLastApiData && !m_resetFetchRequested) {
         const QDateTime now = QDateTime::currentDateTimeUtc();
         if (m_lastApiData.fiveHour.resetsAt.isValid() &&
-            m_lastApiData.fiveHour.resetsAt.toUTC() <= now)
+            m_lastApiData.fiveHour.resetsAt.toUTC() <= now) {
+            m_resetFetchRequested = true;
             m_apiClient->fetchUsage();
+        }
     }
 }
 

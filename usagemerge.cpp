@@ -70,8 +70,17 @@ UsageData UsageMerge::mergeWithLastApi(const UsageData &lastApi,
     // 추가 크레딧 표시 여부와 한도는 API 만이 안다. 켜져 있을 때만 델타 비용을 더한다.
     merged.extraUsage = lastApi.extraUsage;
     if (lastApi.extraUsage.enabled) {
-        merged.extraUsage.usedCredits =
-            lastApi.extraUsage.usedCredits + delta.extraUsage.usedCredits;
+        // 추가 크레딧은 월 단위로 리셋된다. API 응답(lastApi)이 이전 달 것이면
+        // 베이스라인 비용을 0으로 처리해야 전월 누적액이 이번 달 위에 쌓이지 않는다.
+        const QDate apiMonth = lastApi.fetchedAt.toUTC().date();
+        const QDate nowMonth = nowUtc.date();
+        const bool monthRolledOver = (apiMonth.year() != nowMonth.year()
+                                   || apiMonth.month() != nowMonth.month());
+        const double apiBaseCredits = monthRolledOver
+            ? 0.0
+            : lastApi.extraUsage.usedCredits;
+
+        merged.extraUsage.usedCredits = apiBaseCredits + delta.extraUsage.usedCredits;
         if (merged.extraUsage.limitDollars > 0.0) {
             merged.extraUsage.utilization =
                 qMin(1.0, merged.extraUsage.usedCredits / merged.extraUsage.limitDollars);

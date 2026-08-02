@@ -46,7 +46,8 @@ private:
     QString m_lastFetchError;
     bool m_apiFailed      = false;
     bool m_hasLastApiData = false;
-    bool m_isActive       = false;  // 토큰 사용 중 여부
+    bool m_isActive       = false;  // 토큰 사용 중 여부\r
+    bool m_resetFetchRequested = false;  // 리셋 감지 후 API 재호출 요청 여부
     QString m_updateUrl;
 };
 
