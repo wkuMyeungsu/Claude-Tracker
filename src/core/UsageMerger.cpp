@@ -1,5 +1,5 @@
 #include "UsageMerger.h"
-#include "UsageScanner.h"
+#include "UsageAggregator.h"
 
 namespace {
 
@@ -104,9 +104,9 @@ UsageData UsageMerger::mergeWithLastApi(const UsageData &lastApi,
     // 이미 지나간 옛 resetsAt 이 되살아나 리셋 직후 카운트다운이
     // "곧 초기화됩니다" 에서 영영 멈춘다.
     const QDateTime next5h =
-        UsageScanner::estimateNextReset(lastApi.fiveHour.resetsAt, SECS_5H, nowUtc);
+        UsageAggregator::estimateNextReset(lastApi.fiveHour.resetsAt, SECS_5H, nowUtc);
     const QDateTime next7d =
-        UsageScanner::estimateNextReset(lastApi.sevenDay.resetsAt, SECS_7D, nowUtc);
+        UsageAggregator::estimateNextReset(lastApi.sevenDay.resetsAt, SECS_7D, nowUtc);
     if (next5h.isValid())
         merged.fiveHour.resetsAt = next5h;
     if (next7d.isValid()) {

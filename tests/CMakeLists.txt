@@ -8,11 +8,13 @@
 # AUTOMOC/AUTORCC 는 최상위에서 전역으로 켜 두었으므로 그대로 적용된다.
 add_executable(tst_usagelogic
     UsageLogicTest.cpp
+    ${CMAKE_SOURCE_DIR}/src/core/ModelPricing.cpp
+    ${CMAKE_SOURCE_DIR}/src/core/UsageAggregator.cpp
     ${CMAKE_SOURCE_DIR}/src/core/UsageMerger.cpp
     ${CMAKE_SOURCE_DIR}/src/core/QuotaCalibrator.cpp
-    ${CMAKE_SOURCE_DIR}/src/data/UsageScanner.cpp
+    ${CMAKE_SOURCE_DIR}/src/data/SessionLogReader.cpp
     ${CMAKE_SOURCE_DIR}/src/data/UsageApiClient.cpp
-    ${CMAKE_SOURCE_DIR}/src/data/CredentialsReader.cpp
+    ${CMAKE_SOURCE_DIR}/src/data/CredentialsReader.cpp   # UsageApiClient 가 의존
     # 요율 조회가 :/model_pricing.json 을 읽으므로 리소스도 함께 컴파일한다
     ${CMAKE_SOURCE_DIR}/resources/resources.qrc
 )

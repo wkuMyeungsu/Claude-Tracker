@@ -157,7 +157,9 @@ src/
 
 ### `src/core` — 순수 계산
 
-- `UsageTypes.h`: 계층 간에 오가는 자료형 (`QuotaInfo`, `UsageData` 등)
+- `UsageTypes.h`: 계층 간에 오가는 자료형 (`QuotaInfo`, `UsageData`, `TokenRecord`, `ScanResult`)
+- `ModelPricing.h/cpp`: 모델별 요율표 조회와 레코드 1건의 비용 계산
+- `UsageAggregator.h/cpp`: 레코드를 5h/7d 윈도우로 갈라 사용률·비용을 내는 집계
 - `UsageMerger.h/cpp`: 마지막 API 정확값에 로컬 증분을 얹는 병합 로직
 - `QuotaCalibrator.h/cpp`: API 실제 사용률을 정답지 삼아 "토큰 1개당 할당량" 계수를 모델 계열별로 온라인 학습하는 보정기 (쓸수록 로컬 추정이 정확해짐)
 
@@ -165,7 +167,8 @@ src/
 
 - `CredentialsReader.h/cpp`: Claude Code의 로그인 정보를 읽어오는 역할
 - `UsageApiClient.h/cpp`: Claude API 서버와 통신하여 실시간 사용량을 조회하는 역할
-- `UsageScanner.h/cpp`: 로컬 JSONL 대화 로그를 감시·파싱하고 사용량을 집계하는 역할
+- `SessionLogReader.h/cpp`: JSONL 대화 로그를 읽어 `TokenRecord` 로 파싱
+- `SessionLogWatcher.h/cpp`: 로그 변경을 감시하다 백그라운드 스캔을 돌리는 역할 ('언제 셀지'만 담당하고, '무엇을 어떻게 셀지'는 core 에 있음)
 
 ### `src/ui` — 화면
 

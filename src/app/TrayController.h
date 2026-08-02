@@ -4,7 +4,7 @@
 #include <QObject>
 #include <QSystemTrayIcon>
 #include "UsageTypes.h"
-#include "UsageScanner.h"
+#include "SessionLogWatcher.h"
 
 class QMenu;
 class QTimer;
@@ -44,7 +44,7 @@ private:
     QMenu *m_contextMenu = nullptr;
     UsageWindow *m_popup = nullptr;
     UsageApiClient *m_apiClient = nullptr;
-    UsageScanner *m_scanner = nullptr;
+    SessionLogWatcher *m_scanner = nullptr;
     UsageData m_current;
     UsageData m_lastApiData;
     CalibrationSet m_calibration;   // 학습된 "토큰당 할당량" 계수

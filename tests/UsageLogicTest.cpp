@@ -12,7 +12,9 @@
 #include "UsageApiClient.h"
 #include "QuotaCalibrator.h"
 #include "UsageMerger.h"
-#include "UsageScanner.h"
+#include "ModelPricing.h"
+#include "SessionLogReader.h"
+#include "UsageAggregator.h"
 
 namespace {
 
@@ -138,25 +140,25 @@ void TestUsageLogic::estimateNextReset_futureIsKept()
 {
     const QDateTime now  = utc("2026-08-02T12:00:00");
     const QDateTime next = utc("2026-08-02T15:00:00");
-    QCOMPARE(UsageScanner::estimateNextReset(next, SECS_5H, now), next);
+    QCOMPARE(UsageAggregator::estimateNextReset(next, SECS_5H, now), next);
 }
 
 void TestUsageLogic::estimateNextReset_pastRollsForward()
 {
     const QDateTime now = utc("2026-08-02T12:00:00");
     // 06:00 리셋 + 5h 주기 → 11:00 도 지났으므로 16:00 이 다음 리셋
-    QCOMPARE(UsageScanner::estimateNextReset(utc("2026-08-02T06:00:00"), SECS_5H, now),
+    QCOMPARE(UsageAggregator::estimateNextReset(utc("2026-08-02T06:00:00"), SECS_5H, now),
              utc("2026-08-02T16:00:00"));
     // 정확히 한 주기 전이면 바로 다음 주기
-    QCOMPARE(UsageScanner::estimateNextReset(utc("2026-08-02T07:00:00"), SECS_5H, now),
+    QCOMPARE(UsageAggregator::estimateNextReset(utc("2026-08-02T07:00:00"), SECS_5H, now),
              utc("2026-08-02T12:00:00").addSecs(SECS_5H));
 }
 
 void TestUsageLogic::estimateNextReset_invalidInput()
 {
     const QDateTime now = utc("2026-08-02T12:00:00");
-    QVERIFY(!UsageScanner::estimateNextReset(QDateTime(), SECS_5H, now).isValid());
-    QVERIFY(!UsageScanner::estimateNextReset(utc("2026-08-02T06:00:00"), 0, now).isValid());
+    QVERIFY(!UsageAggregator::estimateNextReset(QDateTime(), SECS_5H, now).isValid());
+    QVERIFY(!UsageAggregator::estimateNextReset(utc("2026-08-02T06:00:00"), 0, now).isValid());
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -167,7 +169,7 @@ void TestUsageLogic::earliestRelevant_coversBillingCycle()
     // 추가 크레딧이 월 누적이므로 1일까지 읽어야 한다.
     const QDateTime now = utc("2026-08-28T12:00:00");
     const QDateTime earliest =
-        UsageScanner::earliestRelevant(now, QDateTime(), QDateTime());
+        UsageAggregator::earliestRelevant(now, QDateTime(), QDateTime());
     QCOMPARE(earliest, utc("2026-08-01T00:00:00"));
 }
 
@@ -178,7 +180,7 @@ void TestUsageLogic::earliestRelevant_coversLongOfflineDelta()
     const QDateTime now        = utc("2026-08-20T12:00:00");
     const QDateTime deltaStart = utc("2026-07-25T00:00:00");
     const QDateTime earliest =
-        UsageScanner::earliestRelevant(now, deltaStart, QDateTime());
+        UsageAggregator::earliestRelevant(now, deltaStart, QDateTime());
     QCOMPARE(earliest, deltaStart);
 }
 
@@ -197,7 +199,7 @@ void TestUsageLogic::aggregate_windowBoundaries()
         rec(utc("2026-08-02T11:00:00"), 4, 1),      // 둘 다 안
     };
 
-    const ScanResult r = UsageScanner::aggregate(records, now, QDateTime(),
+    const ScanResult r = UsageAggregator::aggregate(records, now, QDateTime(),
                                                  reset5h, reset7d,
                                                  calib());
     QCOMPARE(r.full.fiveHour.rawTokens, 5);
@@ -213,7 +215,7 @@ void TestUsageLogic::aggregate_cacheReadIsDiscounted()
     const QVector<TokenRecord> records{
         rec(utc("2026-08-02T11:00:00"), 100, 50, "claude-sonnet-5", 10, 1000),
     };
-    const ScanResult r = UsageScanner::aggregate(records, now, QDateTime(),
+    const ScanResult r = UsageAggregator::aggregate(records, now, QDateTime(),
                                                  QDateTime(), QDateTime(),
                                                  calib());
     // rawTokens 는 이제 가중치 없는 원시 합계다 (100+50+10+1000).
@@ -232,7 +234,7 @@ void TestUsageLogic::aggregate_perModelFeaturesAreSeparated()
         rec(utc("2026-08-02T11:10:00"),  70,  5, "claude-sonnet-5"),
         rec(utc("2026-08-02T11:20:00"),   3,  1, "claude-haiku-4-5"),
     };
-    const ScanResult r = UsageScanner::aggregate(records, now, QDateTime(),
+    const ScanResult r = UsageAggregator::aggregate(records, now, QDateTime(),
                                                  QDateTime(), QDateTime(), calib());
 
     QCOMPARE(r.full5hFeatures.tokens[Calib::Opus][Calib::Input],   100);
@@ -252,7 +254,7 @@ void TestUsageLogic::aggregate_utilizationClampedAtOne()
     const QVector<TokenRecord> records{
         rec(utc("2026-08-02T11:00:00"), 5'000'000, 0),
     };
-    const ScanResult r = UsageScanner::aggregate(records, now, QDateTime(),
+    const ScanResult r = UsageAggregator::aggregate(records, now, QDateTime(),
                                                  QDateTime(), QDateTime(),
                                                  calib());
     QCOMPARE(r.full.fiveHour.utilization, 1.0);
@@ -272,7 +274,7 @@ void TestUsageLogic::aggregate_deltaExcludesPreResetTokens()
         rec(utc("2026-08-02T11:30:00"),   7, 0),   // 리셋 후
     };
 
-    const ScanResult r = UsageScanner::aggregate(records, now, deltaStart,
+    const ScanResult r = UsageAggregator::aggregate(records, now, deltaStart,
                                                  reset5h, QDateTime(),
                                                  calib());
     QVERIFY(r.hasDelta);
@@ -292,7 +294,7 @@ void TestUsageLogic::aggregate_extraCreditSurvivesFiveHourReset()
         rec(utc("2026-08-02T11:30:00"), 1'000'000, 0),   // 리셋 후
     };
 
-    const ScanResult r = UsageScanner::aggregate(records, now, deltaStart,
+    const ScanResult r = UsageAggregator::aggregate(records, now, deltaStart,
                                                  reset5h, QDateTime(),
                                                  calib(1'000'000'000, 10'000'000'000));
     // sonnet-5 input = $3/1M → 두 건 모두 세어 $6.00 이어야 한다.
@@ -307,7 +309,7 @@ void TestUsageLogic::aggregate_scannerNeverEnablesExtraCredit()
     const QDateTime now = utc("2026-08-02T12:00:00");
     const QVector<TokenRecord> records{ rec(utc("2026-08-02T11:00:00"), 100, 50) };
 
-    const ScanResult r = UsageScanner::aggregate(records, now, QDateTime(),
+    const ScanResult r = UsageAggregator::aggregate(records, now, QDateTime(),
                                                  QDateTime(), QDateTime(),
                                                  calib());
     QVERIFY(!r.full.extraUsage.enabled);
@@ -319,7 +321,7 @@ void TestUsageLogic::aggregate_noDeltaMeansDeltaEqualsFull()
     const QDateTime now = utc("2026-08-02T12:00:00");
     const QVector<TokenRecord> records{ rec(utc("2026-08-02T11:00:00"), 100, 50) };
 
-    const ScanResult r = UsageScanner::aggregate(records, now, QDateTime(),
+    const ScanResult r = UsageAggregator::aggregate(records, now, QDateTime(),
                                                  QDateTime(), QDateTime(),
                                                  calib());
     QVERIFY(!r.hasDelta);
@@ -354,19 +356,19 @@ void TestUsageLogic::pricing_familyAndVersion()
 {
     QFETCH(QString, model);
     QFETCH(double, expectedInputRate);
-    QCOMPARE(UsageScanner::getPricingForModel(model).inputRate, expectedInputRate);
+    QCOMPARE(ModelPricingTable::forModel(model).inputRate, expectedInputRate);
 }
 
 void TestUsageLogic::pricing_dateSuffixIsNotAVersion()
 {
     // "20250805" 안의 '5' 가 버전 키 "5" 로 오인되면 Opus 4.1($15) 이
     // Opus 5 요율($5, 1/3 가격)로 계산된다.
-    QCOMPARE(UsageScanner::getPricingForModel("claude-opus-4-1-20250805").inputRate, 15.00);
+    QCOMPARE(ModelPricingTable::forModel("claude-opus-4-1-20250805").inputRate, 15.00);
     // 날짜를 뗀 뒤 버전이 정확히 일치해야 한다(4.8 이 4.1 로 새지 않는지).
-    QCOMPARE(UsageScanner::getPricingForModel("claude-opus-4-8-20260115").inputRate, 5.00);
+    QCOMPARE(ModelPricingTable::forModel("claude-opus-4-8-20260115").inputRate, 5.00);
     // 옛 명명 규칙(버전이 계열보다 앞)도 처리되어야 한다.
-    QCOMPARE(UsageScanner::getPricingForModel("claude-3-haiku-20240307").inputRate, 0.25);
-    QCOMPARE(UsageScanner::getPricingForModel("claude-3-5-haiku-20241022").inputRate, 0.80);
+    QCOMPARE(ModelPricingTable::forModel("claude-3-haiku-20240307").inputRate, 0.25);
+    QCOMPARE(ModelPricingTable::forModel("claude-3-5-haiku-20241022").inputRate, 0.80);
 }
 
 void TestUsageLogic::cost_oneHourCacheCostsMoreThanFiveMinute()
@@ -378,14 +380,14 @@ void TestUsageLogic::cost_oneHourCacheCostsMoreThanFiveMinute()
     r.cacheWrite = 1'000'000;
 
     r.cacheWrite1h = 0;
-    QCOMPARE(UsageScanner::costOf(r), 6.25);
+    QCOMPARE(ModelPricingTable::costOf(r), 6.25);
 
     r.cacheWrite1h = 1'000'000;
-    QCOMPARE(UsageScanner::costOf(r), 10.00);
+    QCOMPARE(ModelPricingTable::costOf(r), 10.00);
 
     // 절반씩 섞이면 평균
     r.cacheWrite1h = 500'000;
-    QCOMPARE(UsageScanner::costOf(r), (6.25 + 10.00) / 2.0);
+    QCOMPARE(ModelPricingTable::costOf(r), (6.25 + 10.00) / 2.0);
 }
 
 void TestUsageLogic::cost_fastModeDoublesOpusRates()
@@ -393,17 +395,17 @@ void TestUsageLogic::cost_fastModeDoublesOpusRates()
     TokenRecord r;
     r.model = "claude-opus-5";
     r.input = 1'000'000;
-    QCOMPARE(UsageScanner::costOf(r), 5.00);
+    QCOMPARE(ModelPricingTable::costOf(r), 5.00);
 
     r.fastMode = true;
-    QCOMPARE(UsageScanner::costOf(r), 10.00);   // fast mode: $10/MTok
+    QCOMPARE(ModelPricingTable::costOf(r), 10.00);   // fast mode: $10/MTok
 
     // fast mode 를 지원하지 않는 모델은 배수가 1.0 이라 값이 그대로다.
     TokenRecord s;
     s.model = "claude-sonnet-5";
     s.input = 1'000'000;
     s.fastMode = true;
-    QCOMPARE(UsageScanner::costOf(s), 3.00);
+    QCOMPARE(ModelPricingTable::costOf(s), 3.00);
 }
 
 void TestUsageLogic::cost_webSearchIsBilled()
@@ -411,7 +413,7 @@ void TestUsageLogic::cost_webSearchIsBilled()
     TokenRecord r;
     r.model = "claude-opus-5";
     r.webSearches = 3;                       // $10 / 1,000회
-    QCOMPARE(UsageScanner::costOf(r), 0.03);
+    QCOMPARE(ModelPricingTable::costOf(r), 0.03);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -435,7 +437,7 @@ void TestUsageLogic::readRecords_parsesAndDedupes()
 
     QString recentModel;
     const QVector<TokenRecord> records =
-        UsageScanner::readRecords(tmp.path(), QDateTime(), &recentModel);
+        SessionLogReader::readRecords(tmp.path(), QDateTime(), &recentModel);
 
     QCOMPARE(records.size(), 2);
     QCOMPARE(recentModel, QString("claude-opus-5"));
@@ -461,7 +463,7 @@ void TestUsageLogic::readRecords_convertsOffsetTimestampsToUtc()
     f.close();
 
     const QVector<TokenRecord> records =
-        UsageScanner::readRecords(tmp.path(), QDateTime(), nullptr);
+        SessionLogReader::readRecords(tmp.path(), QDateTime(), nullptr);
 
     QCOMPARE(records.size(), 1);
     QCOMPARE(records[0].ts, utc("2026-08-02T10:00:00"));
@@ -481,7 +483,7 @@ void TestUsageLogic::readRecords_filtersOldRecordsButKeepsRecentModel()
 
     QString recentModel;
     const QVector<TokenRecord> records =
-        UsageScanner::readRecords(tmp.path(), utc("2026-08-01T00:00:00"), &recentModel);
+        SessionLogReader::readRecords(tmp.path(), utc("2026-08-01T00:00:00"), &recentModel);
 
     // 오래된 레코드는 담기지 않지만(메모리 절감), 최근 모델 판정에는 참여한다
     QCOMPARE(records.size(), 1);
@@ -506,7 +508,7 @@ void TestUsageLogic::readRecords_parsesCacheCreationAndSpeed()
     f.close();
 
     const QVector<TokenRecord> records =
-        UsageScanner::readRecords(tmp.path(), QDateTime(), nullptr);
+        SessionLogReader::readRecords(tmp.path(), QDateTime(), nullptr);
 
     QCOMPARE(records.size(), 1);
     QCOMPARE(records[0].cacheWrite,   7988);
@@ -533,7 +535,7 @@ void TestUsageLogic::readRecords_ignoresIterationsArray()
     f.close();
 
     const QVector<TokenRecord> records =
-        UsageScanner::readRecords(tmp.path(), QDateTime(), nullptr);
+        SessionLogReader::readRecords(tmp.path(), QDateTime(), nullptr);
 
     QCOMPARE(records.size(), 1);
     QCOMPARE(records[0].input,      2);      // 4 가 아니다

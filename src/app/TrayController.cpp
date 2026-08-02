@@ -1,9 +1,11 @@
 
 #include "TrayController.h"
+#include "CredentialsReader.h"
+#include "SessionLogWatcher.h"
+#include "UsageAggregator.h"
 #include "UsageApiClient.h"
 #include "UsageMerger.h"
 #include "UsageWindow.h"
-#include "UsageScanner.h"
 #include <QApplication>
 #include <QCursor>
 #include <QMenu>
@@ -20,13 +22,14 @@ TrayController::TrayController(QObject *parent)
     , m_contextMenu(new QMenu)
     , m_popup(new UsageWindow)
     , m_apiClient(new UsageApiClient(this))
-    , m_scanner(new UsageScanner(this))
+    , m_scanner(new SessionLogWatcher(this))
     , m_countdownTimer(new QTimer(this))
 {
     // 보정 계수: 디스크에 학습분이 있으면 이어서 쓰고, 없으면 플랜 한도 prior 로
     // 시작한다. prior 는 예전 하드코딩 공식과 동일해서 첫 실행 표시가 변하지 않는다.
-    m_calibPriors = QuotaCalibrator::priorsFor(UsageScanner::planLimit5h(),
-                                               UsageScanner::planLimit7d());
+    const QString plan = CredentialsReader::subscriptionType();
+    m_calibPriors = QuotaCalibrator::priorsFor(UsageAggregator::planLimit5h(plan),
+                                               UsageAggregator::planLimit7d(plan));
     if (!QuotaCalibrator::loadFrom("calibration", m_calibration))
         m_calibration = m_calibPriors;
     m_scanner->setCalibration(m_calibration);
@@ -48,12 +51,12 @@ TrayController::TrayController(QObject *parent)
             this, &TrayController::onUsageFetched);
     connect(m_apiClient, &UsageApiClient::fetchFailed,
             this, &TrayController::onFetchFailed);
-    connect(m_scanner, &UsageScanner::localUsageUpdated,
+    connect(m_scanner, &SessionLogWatcher::localUsageUpdated,
             this, &TrayController::onLocalUsage);
-    connect(m_scanner, &UsageScanner::activityDetected,
+    connect(m_scanner, &SessionLogWatcher::activityDetected,
             this, &TrayController::onActivityDetected);
     // activityStopped → 게이지바 shimmer 정지 + 10초 뒤 팝업 반투명화 예약
-    connect(m_scanner, &UsageScanner::activityStopped, this, [this]() {
+    connect(m_scanner, &SessionLogWatcher::activityStopped, this, [this]() {
         m_isActive = false;
         m_popup->setIdle();
     });

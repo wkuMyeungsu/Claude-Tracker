@@ -18,6 +18,10 @@ find_package(Qt${QT_VERSION_MAJOR} REQUIRED COMPONENTS Widgets Network Concurren
 # 테스트 타깃이 그대로 링크할 수 있고, ui 는 화면만, data 는 외부 입력만 다룬다.
 set(CORE_SOURCES        # 순수 계산 — GUI·네트워크 비의존
     src/core/UsageTypes.h
+    src/core/ModelPricing.h
+    src/core/ModelPricing.cpp
+    src/core/UsageAggregator.h
+    src/core/UsageAggregator.cpp
     src/core/UsageMerger.h
     src/core/UsageMerger.cpp
     src/core/QuotaCalibrator.h
@@ -28,8 +32,10 @@ set(DATA_SOURCES        # 외부 입력 — 파일·네트워크·자격증명
     src/data/CredentialsReader.cpp
     src/data/UsageApiClient.h
     src/data/UsageApiClient.cpp
-    src/data/UsageScanner.h
-    src/data/UsageScanner.cpp
+    src/data/SessionLogReader.h
+    src/data/SessionLogReader.cpp
+    src/data/SessionLogWatcher.h
+    src/data/SessionLogWatcher.cpp
 )
 set(UI_SOURCES          # 화면
     src/ui/QuotaGauge.h
