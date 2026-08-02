@@ -77,16 +77,27 @@ Windows 시스템 트레이에서 Claude Code의 사용량(quota)과 추가 결�
 
 소스 코드를 로컬에서 직접 컴파일하여 빌드하는 방법입니다.
 
+Qt 설치 경로는 PC마다 다르므로 `$QtRoot` 한 곳만 자기 환경에 맞게 바꾸면 됩니다.
+(Qt Creator에서 열어 빌드해도 동일합니다. 그때는 아래 과정이 필요 없습니다.)
+
 ```powershell
+# 자기 Qt 설치 경로로 바꿀 것. 버전/컴파일러 폴더명도 설치본에 맞춰 조정.
+$QtRoot  = "C:\Qt"
+$QtVer   = "6.11.1"
+$MinGW   = "mingw1310_64"
+
+$QtKit = "$QtRoot\$QtVer\mingw_64"
 # Qt 키트를 PATH 앞에 둔다. 여러 Qt가 설치된 환경에서는
 # 이 설정 없이 빌드하면 의도하지 않은 Qt가 잡힐 수 있다.
-$env:PATH = "C:\Qt\6.11.0\mingw_64\bin;C:\Qt\Tools\mingw1310_64\bin;" +
-            "C:\Qt\Tools\Ninja;C:\Qt\Tools\CMake_64\bin;$env:PATH"
+$env:PATH = "$QtKit\bin;$QtRoot\Tools\$MinGW\bin;" +
+            "$QtRoot\Tools\Ninja;$QtRoot\Tools\CMake_64\bin;$env:PATH"
+
+# CMake 인자에는 슬래시(/) 경로를 넘긴다. 역슬래시는 CMake가 이스케이프로 해석한다.
+$Kit = $QtKit.Replace('\','/'); $Tools = $QtRoot.Replace('\','/') + "/Tools/$MinGW/bin"
 
 cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release `
-    -DCMAKE_PREFIX_PATH="C:/Qt/6.11.0/mingw_64" `
-    -DCMAKE_C_COMPILER="C:/Qt/Tools/mingw1310_64/bin/gcc.exe" `
-    -DCMAKE_CXX_COMPILER="C:/Qt/Tools/mingw1310_64/bin/g++.exe"
+    -DCMAKE_PREFIX_PATH="$Kit" `
+    -DCMAKE_CXX_COMPILER="$Tools/g++.exe"
 
 cmake --build build
 ./build/ClaudeTray.exe
@@ -138,6 +149,7 @@ python tools/gen_icon.py    # appicon.ico 재생성 (pillow 필요)
 - `usageapiclient.h/cpp`: Claude API 서버와 통신하여 실시간 사용량을 조회하는 역할
 - `usagescanner.h/cpp`: 로컬 JSONL 대화 로그 파일을 실시간으로 감시하고 비용을 역산하는 역할
 - `usagemerge.h/cpp`: 마지막 API 정확값에 로컬 증분을 얹는 병합 로직 (GUI 비의존 순수 함수)
+- `usagecalibrator.h/cpp`: API 실제 사용률을 정답지 삼아 "토큰 1개당 할당량" 계수를 모델 계열별로 온라인 학습하는 보정기 (쓸수록 로컬 추정이 정확해짐)
 - `trayapp.h/cpp`: 시스템 트레이 아이콘을 구성하고 프로그램 전체 흐름을 관리하는 역할
 - `usagepopup.h/cpp`: 트레이 아이콘 클릭 시 발생하는 사용량 대시보드 창 UI
 - `quotapanel.h/cpp`: 사용량 게이지바와 임계 경고선 작업을 처리하는 위젯
