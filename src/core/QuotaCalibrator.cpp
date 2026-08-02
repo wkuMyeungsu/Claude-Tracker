@@ -27,18 +27,28 @@ constexpr double LEARNING_RATE = 0.25;
 // 학습하면 웹을 조금만 써도 계수가 천장까지 밀려 올라간다(실제로 겪은 문제).
 constexpr double CONTAMINATED_RATE_FACTOR = 0.25;
 
-// 계수 상한: prior 의 이 배수.
-// 플랜 한도가 대충이라도 맞다면 참값이 prior 의 몇 배씩 될 수는 없다.
-// 예전 값 20 은 너무 헐거워서, 외부 사용이 섞이면 20배 과대 보고까지 허용했고
-// 한 번 밀려 올라간 계수가 정상 사용만으로는 사실상 내려오지 않았다.
-// 3 이면 로그가 절반쯤 누락되는 사용자(참값 ≈ 2×prior)도 수용하면서
-// 최악의 피해를 3배로 묶는다.
-constexpr double MAX_COEFF_RATIO = 3.0;
+// ── 자가 복구 판정 ────────────────────────────────────────────────────────────
+// 아래 셋은 '얼마나 빨리 알아채는가'만 좌우한다. 정확도의 상한을 정하지
+// 않으므로, 근거 없는 배수로 천장을 치던 예전 방식과 성격이 다르다.
+constexpr double EWMA_ALPHA              = 0.2;   // 최근 5 관측 정도의 기억
+constexpr int    MIN_SAMPLES_BEFORE_JUDGING = 20; // 학습에 기회를 준 뒤 판정
+constexpr double WORSE_MARGIN            = 1.5;   // 잡음이 아니라 확실히 나쁠 때만
 
-// 천장에 연속으로 이만큼 붙어 있으면 학습분을 버리고 prior 로 되돌린다.
-// 천장에 눌려 있다는 건 선형 모델이 관측을 설명하지 못한다는 뜻이고,
-// 그 상태의 계수는 prior 보다 나을 게 없다. 사용자가 알 필요 없이 스스로 낫는다.
-constexpr int MAX_SATURATED_STREAK = 5;
+// 계열별 상대 가중치 (Sonnet = 1.0 기준).
+//
+// 근거: Anthropic 은 차감 가중치를 공개하지 않지만, "Fable 5 는 Opus 세션의
+// 약 2배를 주간 한도에서 차감한다"는 공개 수치가 단가비(10:5 = 2.0)와 맞는다.
+// 그래서 단가비를 초기 가설로 쓴다. Sonnet 을 기준으로 잡은 이유는 Pro 플랜이
+// Sonnet 전용이라 한도 역산의 기준이었을 가능성이 높기 때문이다.
+//
+// 한계: Calib::familyOf 는 fable/mythos 를 Opus 로 묶으므로 Fable 사용자는
+// 초기값이 2배 과소평가된다. 학습이 메우는 몫이다.
+constexpr double FAMILY_WEIGHT[Calib::FamilyCount] = {
+    5.0 / 3.0,   // Opus   (단가 $5 vs Sonnet $3)
+    1.0,         // Sonnet (기준)
+    1.0 / 3.0,   // Haiku  (단가 $1)
+    1.0,         // 그 외  — 알 수 없으므로 기준값
+};
 
 // 관측을 신뢰할 수 있는 utilization 구간.
 // 0 근처는 신호가 없고, 1.0 은 포화(클리핑)라 참값을 알 수 없다.
@@ -118,11 +128,12 @@ QuotaCoefficients priorFor(qint64 limitTokens)
 
     const double perToken = 1.0 / static_cast<double>(limitTokens);
     for (int f = 0; f < Calib::FamilyCount; ++f) {
-        q.c[f][Calib::Input]      = perToken;
-        q.c[f][Calib::Output]     = perToken;
-        q.c[f][Calib::CacheWrite] = perToken;
-        // 예전 CACHE_READ_WEIGHT = 0.1 과 동일한 초기값.
-        q.c[f][Calib::CacheRead]  = perToken * 0.1;
+        const double w = FAMILY_WEIGHT[f];
+        q.c[f][Calib::Input]      = perToken * w;
+        q.c[f][Calib::Output]     = perToken * w;
+        q.c[f][Calib::CacheWrite] = perToken * w;
+        // 캐시 읽기는 단가가 입력의 1/10 이다 (전 계열 공통 비율).
+        q.c[f][Calib::CacheRead]  = perToken * w * 0.1;
     }
     return q;
 }
@@ -160,45 +171,59 @@ bool observe(QuotaCoefficients &coeff, const UsageFeatures &features,
     if (norm <= 0.0)
         return false;
 
-    const double error = observedUtil - coeff.predict(features);
+    const double error      = observedUtil - coeff.predict(features);
+    const double errorPrior = observedUtil - prior.predict(features);
     if (residualOut)
         *residualOut = error;   // 양수 = 로컬 로그로 설명 안 되는 사용량(ε 추정)
+
+    // 학습분과 prior 의 성능을 나란히 누적한다. 갱신 '전' 오차로 비교해야
+    // 같은 관측을 두 모델이 똑같이 맞히는 조건이 된다.
+    coeff.errLearned = EWMA_ALPHA * error * error
+                     + (1.0 - EWMA_ALPHA) * coeff.errLearned;
+    coeff.errPrior   = EWMA_ALPHA * errorPrior * errorPrior
+                     + (1.0 - EWMA_ALPHA) * coeff.errPrior;
 
     // 오염된 방향(error > 0)만 감속한다. 위 상수 주석의 유도 참고.
     const double rate = (error < 0.0) ? LEARNING_RATE
                                       : LEARNING_RATE * CONTAMINATED_RATE_FACTOR;
 
-    bool hitCeiling = false;
     for (int f = 0; f < Calib::FamilyCount; ++f) {
         for (int k = 0; k < Calib::KindCount; ++k) {
             const double x = static_cast<double>(features.tokens[f][k]);
             if (x <= 0.0)
                 continue;   // 관측되지 않은 조합은 건드리지 않는다
             coeff.c[f][k] += rate * error * x / norm;
-
-            // 음수 방지 + 폭주 방지. prior 가 0 인 축(한도 미상)은 천장을 두지 않는다.
             if (coeff.c[f][k] < 0.0)
-                coeff.c[f][k] = 0.0;
-            const double ceiling = prior.c[f][k] * MAX_COEFF_RATIO;
-            if (ceiling > 0.0 && coeff.c[f][k] > ceiling) {
-                coeff.c[f][k] = ceiling;
-                hitCeiling = true;
-            }
+                coeff.c[f][k] = 0.0;   // 사용률을 깎는 토큰은 존재하지 않는다
         }
+    }
+
+    // 상한은 '추측한 배수'가 아니라 정의에서 나온다: utilization 은 100% 를
+    // 넘을 수 없다. 이 관측에 대해 100% 초과를 예측하는 계수 조합은 관측과
+    // 모순이므로 그만큼만 되돌린다.
+    //
+    // predict 는 x>0 인 축들의 합이므로, 그 축들만 같은 비율로 줄이면 예측이
+    // 정확히 그 비율로 줄어든다.
+    const double predicted = coeff.predict(features);
+    if (predicted > 1.0) {
+        const double scale = 1.0 / predicted;
+        for (int f = 0; f < Calib::FamilyCount; ++f)
+            for (int k = 0; k < Calib::KindCount; ++k)
+                if (features.tokens[f][k] > 0)
+                    coeff.c[f][k] *= scale;
     }
 
     ++coeff.samples;
 
-    // 자가 복구: 천장에 계속 눌려 있으면 학습분을 버린다.
-    // 한 번은 지나가는 외란이지만, 연속이면 모델이 관측을 설명하지 못한다는
-    // 뜻이라 prior 가 오히려 낫다. 사용자 개입도 GUI 도 필요 없다.
-    coeff.saturatedStreak = hitCeiling ? coeff.saturatedStreak + 1 : 0;
-    if (coeff.saturatedStreak >= MAX_SATURATED_STREAK) {
+    // 자가 복구: 학습분이 prior 보다 확실히 못 맞히면 되돌린다.
+    // 참 한도를 몰라도 '어느 쪽이 더 잘 맞히는가'는 직접 잴 수 있다.
+    // 사용자 개입도 GUI 도 필요 없다.
+    if (coeff.samples >= MIN_SAMPLES_BEFORE_JUDGING
+        && coeff.errLearned > coeff.errPrior * WORSE_MARGIN) {
         const int seen = coeff.samples;
-        coeff = prior;                  // samples·streak 도 함께 0 으로
-        qWarning() << "[QuotaCalibrator] 계수가" << MAX_SATURATED_STREAK
-                   << "회 연속 천장에 도달 — 학습분" << seen
-                   << "건을 버리고 초기값으로 되돌림";
+        coeff = prior;                  // samples·EWMA 도 함께 초기화
+        qWarning() << "[QuotaCalibrator] 학습분이 초기값보다 예측이 나빠"
+                   << seen << "건을 버리고 되돌림";
     }
 
     return true;
@@ -213,8 +238,9 @@ namespace {
 QJsonObject toJson(const QuotaCoefficients &q)
 {
     QJsonObject o;
-    o["samples"] = q.samples;
-    o["saturated"] = q.saturatedStreak;
+    o["samples"]     = q.samples;
+    o["errLearned"]  = q.errLearned;
+    o["errPrior"]    = q.errPrior;
     for (int f = 0; f < Calib::FamilyCount; ++f) {
         QJsonArray row;
         for (int k = 0; k < Calib::KindCount; ++k)
@@ -224,28 +250,25 @@ QJsonObject toJson(const QuotaCoefficients &q)
     return o;
 }
 
-// prior 를 함께 받아 검증한다. 저장분이 현재 천장을 넘으면 그 창은 통째로
-// 버린다 — 플랜이 바뀌어 한도가 달라졌거나, 천장을 조이기 전 버전이 남긴
-// 과대 계수이거나, 파일이 손상된 경우다. 어느 쪽이든 prior 가 낫다.
-bool fromJson(const QJsonObject &o, QuotaCoefficients &q,
-              const QuotaCoefficients &prior)
+// 손상 여부만 본다. '값이 너무 크다'는 판정은 여기서 하지 않는다 — 그러려면
+// 근거 없는 배수가 다시 필요해지기 때문이다. 과대한 계수는 첫 관측에서
+// predict ≤ 1.0 제약이 즉시 끌어내리고, 그래도 나쁘면 자가 복구가 되돌린다.
+bool fromJson(const QJsonObject &o, QuotaCoefficients &q)
 {
     if (o.isEmpty())
         return false;
     QuotaCoefficients loaded;
-    loaded.samples         = o["samples"].toInt();
-    loaded.saturatedStreak = o["saturated"].toInt();
+    loaded.samples    = o["samples"].toInt();
+    loaded.errLearned = o["errLearned"].toDouble(0.0);
+    loaded.errPrior   = o["errPrior"].toDouble(0.0);
     for (int f = 0; f < Calib::FamilyCount; ++f) {
         const QJsonArray row = o[FAMILY_KEYS[f]].toArray();
         if (row.size() != Calib::KindCount)
             return false;
         for (int k = 0; k < Calib::KindCount; ++k) {
             const double v = row.at(k).toDouble(-1.0);
-            if (v < 0.0)
+            if (v < 0.0 || !qIsFinite(v))
                 return false;      // 손상된 값이면 통째로 버리고 prior 로 간다
-            const double ceiling = prior.c[f][k] * MAX_COEFF_RATIO;
-            if (ceiling > 0.0 && v > ceiling)
-                return false;      // 현재 기준으로 말이 안 되는 값
             loaded.c[f][k] = v;
         }
     }
@@ -280,19 +303,19 @@ bool loadFrom(const QString &group, CalibrationSet &set, const CalibrationSet &p
 
     // 창마다 독립적으로 판단한다. 5h 가 망가졌다고 7d 학습분까지 버릴 이유가 없다.
     int restored = 0;
-    if (fromJson(root["5h"].toObject(), set.fiveHour, priors.fiveHour))
+    if (fromJson(root["5h"].toObject(), set.fiveHour))
         ++restored;
-    if (fromJson(root["7d"].toObject(), set.sevenDay, priors.sevenDay))
+    if (fromJson(root["7d"].toObject(), set.sevenDay))
         ++restored;
     // 7d_sonnet 은 나중에 추가된 항목이라 없을 수 있다. 없으면 7d 값으로 시작한다.
-    if (fromJson(root["7d_sonnet"].toObject(), set.sevenDaySonnet, priors.sevenDaySonnet))
+    if (fromJson(root["7d_sonnet"].toObject(), set.sevenDaySonnet))
         ++restored;
     else
         set.sevenDaySonnet = set.sevenDay;
 
     if (restored < 3) {
-        qWarning() << "[QuotaCalibrator] 저장된 보정값 일부가 현재 기준을 벗어나"
-                   << (3 - restored) << "개 창을 초기값으로 되돌림";
+        qWarning() << "[QuotaCalibrator] 저장된 보정값" << (3 - restored)
+                   << "개 창이 손상돼 초기값으로 되돌림";
     }
     return restored > 0;
 }

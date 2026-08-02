@@ -42,10 +42,13 @@ struct UsageFeatures {
 struct QuotaCoefficients {
     double c[Calib::FamilyCount][Calib::KindCount] = {};
     int    samples = 0;      // 학습에 반영된 관측 수 (신뢰도 표시용)
-    // 계수가 연속으로 천장에 붙은 관측 수. 한 번은 지나가는 외란이지만
-    // 계속 붙어 있다는 건 선형 모델이 데이터를 설명하지 못한다는 뜻이라
-    // 학습분을 버리고 prior 로 되돌린다 (자가 복구).
-    int    saturatedStreak = 0;
+
+    // 자가 복구 판정용. 학습한 계수와 prior 각각의 제곱오차 EWMA 를 나란히
+    // 들고 있다가, 학습분이 prior 보다 확실히 나쁘면 되돌린다.
+    // "천장에 몇 번 붙었나" 같은 임의 기준 대신 '실제로 더 잘 맞히는가'를
+    // 직접 재는 것이라, 참 한도를 몰라도 판정할 수 있다.
+    double errLearned = 0.0;
+    double errPrior   = 0.0;
 
     double predict(const UsageFeatures &f) const;
     bool   isValid() const;  // 계수가 하나라도 양수인가
@@ -59,9 +62,13 @@ struct CalibrationSet {
 
 namespace QuotaCalibrator {
 
-// 하드코딩 플랜 한도에서 출발하는 초기 계수.
-// input/output/cacheWrite 는 1/limit, cacheRead 는 0.1/limit —
-// 예전 CACHE_READ_WEIGHT 공식과 정확히 같은 값이다.
+// 플랜 한도에서 출발하는 초기 계수.
+//
+// Anthropic 은 모델별 할당량 차감 가중치를 공개하지 않는다. 다만 "Fable 5 는
+// Opus 세션의 약 2배를 주간 한도에서 차감한다"는 공개 수치가 단가비(10:5=2.0)와
+// 일치하므로, '차감량이 단가에 비례한다'를 초기 가설로 삼아 계열별로 차등한다.
+// 예전처럼 모든 계열을 동일하게 두는 것은 단가가 5배 차이나는 점에 비추어
+// 확실히 틀린 가정이었다. 가설이 빗나가도 학습이 교정한다.
 QuotaCoefficients priorFor(qint64 limitTokens);
 CalibrationSet    priorsFor(qint64 limit5h, qint64 limit7d);
 

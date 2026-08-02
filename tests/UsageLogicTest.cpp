@@ -113,8 +113,9 @@ private slots:
     void calibrator_learnsPerFamilyIndependently();
     void calibrator_learnsDownFasterThanUp();
     void calibrator_residualReportsUnexplainedUsage();
-    void calibrator_clampsRunawayCoefficients();
-    void calibrator_selfHealsWhenPinnedAtCeiling();
+    void calibrator_neverPredictsOverFullQuota();
+    void calibrator_revertsWhenWorseThanPrior();
+    void calibrator_priorWeightsFamiliesByPrice();
 
     // ── UsageMerger ───────────────────────────────────────────────────────────
     void merge_addsDeltaOnTopOfApi();
@@ -555,13 +556,18 @@ void TestUsageLogic::calibrator_priorMatchesLegacyFormula()
     // 0 건인 첫 실행에서 화면 숫자가 달라지지 않는다.
     const QuotaCoefficients p = QuotaCalibrator::priorFor(1'000'000);
 
+    // Sonnet 은 계열 가중치 1.0 기준이라 예전 공식 그대로여야 한다.
     UsageFeatures f;
-    f.add(Calib::Opus, Calib::Input,      100);
-    f.add(Calib::Opus, Calib::Output,      50);
-    f.add(Calib::Opus, Calib::CacheWrite,  10);
-    f.add(Calib::Opus, Calib::CacheRead, 1000);   // 가중치 0.1 → 100
+    f.add(Calib::Sonnet, Calib::Input,      100);
+    f.add(Calib::Sonnet, Calib::Output,      50);
+    f.add(Calib::Sonnet, Calib::CacheWrite,  10);
+    f.add(Calib::Sonnet, Calib::CacheRead, 1000);   // 가중치 0.1 → 100
 
     QCOMPARE(p.predict(f), 260.0 / 1'000'000.0);
+
+    // 한도가 커지면 토큰당 소모는 그만큼 작아진다 (선형).
+    const QuotaCoefficients big = QuotaCalibrator::priorFor(10'000'000);
+    QVERIFY(qAbs(big.predict(f) - p.predict(f) / 10.0) < 1e-15);
 
     // 한도를 모르면 계수가 0 이라 예측도 0 이다.
     QVERIFY(!QuotaCalibrator::priorFor(0).isValid());
@@ -575,16 +581,17 @@ void TestUsageLogic::calibrator_convergesTowardObservedUtilization()
 
     UsageFeatures f;
     f.add(Calib::Opus, Calib::Input, 200'000);
-    const double truth = 0.40;               // 200k 토큰이 실제로는 40%
-
-    QCOMPARE(coeff.predict(f), 0.20);        // 학습 전에는 20% 로 과소 추정
+    // 참값이 prior 추정의 1.5배인 사용자 (prior 는 계열 가중치가 들어 있으므로
+    // 기대값을 상수로 박지 않고 prior 에서 유도한다)
+    const double truth = prior.predict(f) * 1.5;
+    QVERIFY(truth < 1.0);
 
     // 상향(오염 가능) 방향이라 감속 학습이 걸려 예전보다 표본이 더 필요하다.
     // 그래도 API 폴링 5분 주기 기준 반나절이면 수렴한다.
     for (int i = 0; i < 150; ++i)
         QVERIFY(QuotaCalibrator::observe(coeff, f, truth, prior));
 
-    QCOMPARE(coeff.samples, 150);
+    QCOMPARE(coeff.samples, 150);            // 학습이 도움이 되므로 되돌아가지 않는다
     QVERIFY2(qAbs(coeff.predict(f) - truth) < 0.005,
              qPrintable(QString("predict=%1").arg(coeff.predict(f))));
 }
@@ -624,12 +631,14 @@ void TestUsageLogic::calibrator_residualReportsUnexplainedUsage()
     QuotaCoefficients coeff = prior;
 
     UsageFeatures f;
-    f.add(Calib::Opus, Calib::Input, 100'000);     // prior 예측 = 0.10
+    f.add(Calib::Opus, Calib::Input, 100'000);
+    const double observed = 0.30;
+    const double expected = observed - prior.predict(f);   // 설명 안 되는 몫
 
     double residual = 0.0;
-    QVERIFY(QuotaCalibrator::observe(coeff, f, 0.30, prior, &residual));
-    QVERIFY2(qAbs(residual - 0.20) < 1e-9,
-             qPrintable(QString("residual=%1").arg(residual)));
+    QVERIFY(QuotaCalibrator::observe(coeff, f, observed, prior, &residual));
+    QVERIFY2(qAbs(residual - expected) < 1e-9,
+             qPrintable(QString("residual=%1 expected=%2").arg(residual).arg(expected)));
 
     // 학습이 일어나지 않는 관측에서는 0 으로 초기화된다.
     double none = 123.0;
@@ -670,53 +679,78 @@ void TestUsageLogic::calibrator_learnsPerFamilyIndependently()
     QCOMPARE(coeff.c[Calib::Haiku][Calib::Input], haikuBefore);
 }
 
-void TestUsageLogic::calibrator_clampsRunawayCoefficients()
+void TestUsageLogic::calibrator_neverPredictsOverFullQuota()
 {
-    // 로컬 로그가 크게 유실된 상황(토큰은 조금인데 API 는 90%)에서도
-    // 계수가 무한정 커지면 안 된다. 천장은 prior 의 3배.
+    // 상한은 추측한 배수가 아니라 정의에서 온다: utilization 은 100% 를 넘을 수
+    // 없다. 로그가 크게 유실된 상황(토큰은 조금인데 API 는 90%)에서 계수가
+    // 아무리 밀려도, 그 관측에 대한 예측이 1.0 을 넘어선 안 된다.
     const QuotaCoefficients prior = QuotaCalibrator::priorFor(1'000'000);
     QuotaCoefficients coeff = prior;
 
     UsageFeatures tiny;
     tiny.add(Calib::Opus, Calib::Input, 1'000);
-    // 자가 복구가 걸리면 5회마다 되돌아가므로 여러 주기를 도는 정도면 충분하다.
-    for (int i = 0; i < 40; ++i) {
+
+    for (int i = 0; i < 200; ++i) {
         QuotaCalibrator::observe(coeff, tiny, 0.90, prior);
-        QVERIFY2(coeff.c[Calib::Opus][Calib::Input]
-                     <= prior.c[Calib::Opus][Calib::Input] * 3.0 + 1e-12,
-                 "천장을 넘은 순간이 한 번이라도 있으면 안 된다");
+        QVERIFY2(coeff.predict(tiny) <= 1.0 + 1e-12,
+                 qPrintable(QString("predict=%1 (i=%2)").arg(coeff.predict(tiny)).arg(i)));
         QVERIFY(coeff.c[Calib::Opus][Calib::Input] >= 0.0);
     }
 }
 
-void TestUsageLogic::calibrator_selfHealsWhenPinnedAtCeiling()
+void TestUsageLogic::calibrator_revertsWhenWorseThanPrior()
 {
-    // 천장에 계속 눌려 있다 = 선형 모델이 관측을 설명하지 못한다.
-    // 그 상태의 계수는 prior 보다 나을 게 없으므로 스스로 학습분을 버려야 한다.
-    // (사용자에게 '초기화' 버튼을 맡기지 않는다 — 시스템이 알아서 낫는다)
+    // 자가 복구 기준은 '천장에 몇 번 붙었나'가 아니라 '실제로 더 잘 맞히는가'다.
+    // 참 한도를 몰라도 두 모델의 예측 오차를 직접 비교하면 판정할 수 있다.
     const QuotaCoefficients prior = QuotaCalibrator::priorFor(1'000'000);
-    QuotaCoefficients coeff = prior;
 
-    UsageFeatures tiny;
-    tiny.add(Calib::Opus, Calib::Input, 1'000);   // 설명 불가능한 관측
-
-    // 천장에 붙기 시작하고, 연속 5회가 되면 되돌아간다.
-    bool sawReset = false;
-    for (int i = 0; i < 60; ++i) {
-        QuotaCalibrator::observe(coeff, tiny, 0.90, prior);
-        if (coeff.samples == 0) { sawReset = true; break; }
-    }
-    QVERIFY2(sawReset, "천장에 계속 눌려 있는데도 초기화되지 않았다");
-    QCOMPARE(coeff.c[Calib::Opus][Calib::Input], prior.c[Calib::Opus][Calib::Input]);
-    QCOMPARE(coeff.saturatedStreak, 0);
-
-    // 정상 범위 관측에서는 초기화가 일어나면 안 된다.
-    QuotaCoefficients healthy = prior;
     UsageFeatures f;
     f.add(Calib::Opus, Calib::Input, 200'000);
-    for (int i = 0; i < 60; ++i)
-        QuotaCalibrator::observe(healthy, f, 0.22, prior);   // prior 예측 0.20
-    QCOMPARE(healthy.samples, 60);
+
+    // ① 저장된 계수가 현실과 어긋나는 경우 — 예: 플랜을 Pro→Max 로 올려서
+    //    한도가 커졌는데 옛 계수가 그대로 남아 크게 과대 예측하는 상황.
+    //    (충분히 학습됐던 상태로 저장돼 있었으므로 samples 가 크다)
+    QuotaCoefficients stale = prior;
+    for (int fam = 0; fam < Calib::FamilyCount; ++fam)
+        for (int k = 0; k < Calib::KindCount; ++k)
+            stale.c[fam][k] *= 20.0;
+    stale.samples = 100;
+
+    bool reverted = false;
+    for (int i = 0; i < 30; ++i) {
+        QuotaCalibrator::observe(stale, f, prior.predict(f), prior);
+        if (stale.samples == 0) { reverted = true; break; }
+    }
+    QVERIFY2(reverted, "prior 가 더 잘 맞히는데도 되돌아가지 않았다");
+    QCOMPARE(stale.c[Calib::Opus][Calib::Input], prior.c[Calib::Opus][Calib::Input]);
+
+    // ② 학습이 실제로 도움이 되는 경우에는 되돌리면 안 된다.
+    //    참값이 prior 예측의 1.5배인 사용자 — 학습분이 계속 이긴다.
+    QuotaCoefficients good = prior;
+    const double truth = prior.predict(f) * 1.5;
+    for (int i = 0; i < 300; ++i)
+        QuotaCalibrator::observe(good, f, truth, prior);
+
+    QCOMPARE(good.samples, 300);          // 한 번도 되돌아가지 않음
+    QVERIFY2(qAbs(good.predict(f) - truth) < 0.005,
+             qPrintable(QString("predict=%1 truth=%2").arg(good.predict(f)).arg(truth)));
+}
+
+void TestUsageLogic::calibrator_priorWeightsFamiliesByPrice()
+{
+    // 계열 무관 prior 는 단가가 5배 차이나는 점에 비추어 확실히 틀린 가정이었다.
+    // Sonnet 기준으로 Opus 5/3 배, Haiku 1/3 배.
+    const QuotaCoefficients p = QuotaCalibrator::priorFor(1'000'000);
+    const double sonnet = p.c[Calib::Sonnet][Calib::Input];
+
+    QVERIFY(sonnet > 0.0);
+    QVERIFY2(qAbs(p.c[Calib::Opus][Calib::Input] / sonnet - 5.0 / 3.0) < 1e-9,
+             "Opus 가 Sonnet 단가비(5:3)만큼 무겁게 잡혀야 한다");
+    QVERIFY2(qAbs(p.c[Calib::Haiku][Calib::Input] / sonnet - 1.0 / 3.0) < 1e-9,
+             "Haiku 가 Sonnet 단가비(1:3)만큼 가볍게 잡혀야 한다");
+    // 캐시 읽기는 계열과 무관하게 입력의 1/10
+    QVERIFY(qAbs(p.c[Calib::Opus][Calib::CacheRead]
+                 / p.c[Calib::Opus][Calib::Input] - 0.1) < 1e-9);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
