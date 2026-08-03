@@ -6,9 +6,11 @@
 
 #include <QtTest>
 #include <QDir>
+#include <QScopeGuard>
 #include <QTemporaryDir>
 #include <QTimeZone>
 
+#include "CredentialsReader.h"
 #include "HookBridge.h"
 #include "UsageApiClient.h"
 #include "QuotaCalibrator.h"
@@ -138,6 +140,13 @@ private slots:
     void merge_extraCreditOnlyWhenApiEnabledIt();
     void merge_extraCreditResetsOnMonthRollover();
     void merge_extraCreditKeepsBaselineWhenFetchedAtUnknown();
+
+    // ── 크레딧 표시 모드 판정 ─────────────────────────────────────────────────
+    void creditMetering_offWhileQuotaRemains();
+    void creditMetering_onWhenEitherWindowSaturated();
+
+    // ── 폴링 예약 ────────────────────────────────────────────────────────────
+    void fetch_credentialFailureRechecksSoon();
 
     // ── 추가 결제 크레딧 청구 비율 ────────────────────────────────────────────
     void charge_nothingWhileUnderQuota();
@@ -1148,6 +1157,46 @@ void TestUsageLogic::merge_extraCreditKeepsBaselineWhenFetchedAtUnknown()
     QCOMPARE(merged.extraUsage.usedCredits, 5.00);
 }
 
+// ── 크레딧 표시 모드 판정 ─────────────────────────────────────────────────────
+
+void TestUsageLogic::creditMetering_offWhileQuotaRemains()
+{
+    // 첫 화면부터 크레딧으로 잡히던 버그의 회귀 방지. 추가 결제가 켜져 있고
+    // 이번 달 누적액이 있어도, 5h·7d 가 남아 있으면 크레딧은 나가지 않는다.
+    UsageData d = makeApiData(0.20, utc("2026-08-02T15:00:00"),
+                              0.60, utc("2026-08-07T00:00:00"));
+    d.extraUsage.enabled      = true;
+    d.extraUsage.usedCredits  = 7.30;    // 지난 주기에 쓴 월 누적액
+    d.extraUsage.limitDollars = 20.00;
+
+    QVERIFY(!isCreditMetering(d));
+}
+
+void TestUsageLogic::creditMetering_onWhenEitherWindowSaturated()
+{
+    // 5h 가 막 리셋돼 여유로워도 주간 한도가 차 있으면 크레딧이 나간다.
+    // 청구 로직(chargeableRatio 의 max(5h, 7d))과 같은 기준이어야 한다.
+    UsageData weekly = makeApiData(0.05, utc("2026-08-02T15:00:00"),
+                                   1.00, utc("2026-08-07T00:00:00"));
+    weekly.extraUsage.enabled = true;
+    QVERIFY(isCreditMetering(weekly));
+
+    UsageData fiveHour = makeApiData(1.00, utc("2026-08-02T15:00:00"),
+                                     0.30, utc("2026-08-07T00:00:00"));
+    fiveHour.extraUsage.enabled = true;
+    QVERIFY(isCreditMetering(fiveHour));
+
+    // 결제가 꺼져 있으면 한도가 차든 말든 크레딧은 나가지 않는다.
+    fiveHour.extraUsage.enabled = false;
+    QVERIFY(!isCreditMetering(fiveHour));
+
+    // 포화 판정 자체. 화면의 물결 효과가 이 값으로 켜고 꺼지므로,
+    // '아직 모른다'(valid == false)를 찼다고 단정하면 안 된다.
+    QVERIFY(isQuotaSaturated(weekly.sevenDay));
+    QVERIFY(!isQuotaSaturated(weekly.fiveHour));
+    QVERIFY(!isQuotaSaturated(QuotaInfo()));
+}
+
 // ── 추가 결제 크레딧 청구 비율 ────────────────────────────────────────────────
 
 void TestUsageLogic::charge_nothingWhileUnderQuota()
@@ -1211,6 +1260,42 @@ void TestUsageLogic::charge_defaultsToFullWhenNoQuotaKnown()
     QVERIFY(UsageMerger::chargeableRatioFor(invalid, delta, false) < 0.0);
 
     QCOMPARE(UsageMerger::chargeableRatio(UsageData(), UsageData(), false, false), 1.0);
+}
+
+// ── 폴링 예약 ────────────────────────────────────────────────────────────────
+
+void TestUsageLogic::fetch_credentialFailureRechecksSoon()
+{
+    // 설치 직후 첫 사용량이 한참 뒤에야 뜨던 버그의 회귀 방지.
+    //
+    // 로그인 전이라 자격증명이 없으면 첫 시도는 반드시 실패한다. 그때 정상
+    // 주기(5분)로 예약해 버리면 그 사이에 로그인해도 5분을 기다려야 한다.
+    // 30초 재시도 경로는 HTTP 응답을 받은 뒤에만 동작하므로 여기선 안 걸린다.
+    // 개발자 PC 에는 진짜 자격증명이 있으므로 빈 설정 디렉터리를 가리켜
+    // '로그인 전' 상태를 만든다. 테스트가 끝나면 원래 값으로 되돌린다.
+    QTemporaryDir emptyConfig;
+    QVERIFY(emptyConfig.isValid());
+    const QByteArray savedConfigDir = qgetenv("CLAUDE_CONFIG_DIR");
+    qputenv("CLAUDE_CONFIG_DIR", emptyConfig.path().toLocal8Bit());
+    const auto restore = qScopeGuard([&savedConfigDir]() {
+        if (savedConfigDir.isEmpty())
+            qunsetenv("CLAUDE_CONFIG_DIR");
+        else
+            qputenv("CLAUDE_CONFIG_DIR", savedConfigDir);
+    });
+    QVERIFY(CredentialsReader::accessToken().isEmpty());
+
+    UsageApiClient client;
+    QSignalSpy failed(&client, &UsageApiClient::fetchFailed);
+
+    client.fetchUsage();
+
+    QCOMPARE(failed.count(), 1);
+    QVERIFY(!failed.at(0).at(1).toBool());     // 네트워크 오류가 아니다
+    const qint64 delayMs =
+        QDateTime::currentDateTime().msecsTo(client.nextScheduledFetchAt());
+    QVERIFY2(delayMs > 0 && delayMs <= 11 * 1000,
+             qPrintable(QString("다음 시도까지 %1ms (10초 이내여야 한다)").arg(delayMs)));
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

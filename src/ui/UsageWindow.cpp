@@ -503,7 +503,7 @@ void UsageWindow::slideToPage(int index)
 // 이제 여기 한 곳에서만 만들고, 호출측은 반드시 측정 전에 부른다.
 void UsageWindow::updateCreditDetail()
 {
-    if (!creditActive())
+    if (!creditVisible())
         return;
 
     QString text = QString("$%1 / $%2")
@@ -525,15 +525,18 @@ void UsageWindow::updateLayoutVisibility()
     // 잡힌 뒤 두 줄이 그려져 잘린다.
     updateCreditDetail();
 
-    const bool extra = creditActive();
+    const bool extra = creditVisible();
 
     if (m_viewMode == 0) {
-        // 컴팩트: 크레딧을 쓰는 중이면 100% 로 꽉 찬 게이지 대신 크레딧만 보여준다.
-        m_panel5h->setVisible(!extra);
+        // 컴팩트: 크레딧이 '실제로 나가는 중'일 때만 100% 로 꽉 찬 게이지 대신
+        // 크레딧을 세운다. 추가 결제가 켜져 있다는 이유만으로 바꾸면 아직 5h 가
+        // 남아 있는 첫 화면부터 크레딧이 자리를 차지한다.
+        const bool metering = creditMetering();
+        m_panel5h->setVisible(!metering);
         m_sepQuota->setVisible(false);
         m_panel7d->setVisible(false);
         m_sepExtra->setVisible(false);
-        m_extraWidget->setVisible(extra);
+        m_extraWidget->setVisible(metering);
     } else {
         m_panel5h->setVisible(true);
         m_sepQuota->setVisible(true);
@@ -552,9 +555,16 @@ void UsageWindow::applyWindowOpacity()
 
 // ── 데이터 반영 ───────────────────────────────────────────────────────────────
 
-bool UsageWindow::creditActive() const
+// 크레딧 카드를 보여줄 수 있는가 = 계정에 추가 결제가 켜져 있는가.
+bool UsageWindow::creditVisible() const
 {
-    return m_currentData.extraUsage.enabled || m_currentData.extraUsage.usedCredits > 0.0;
+    return m_currentData.extraUsage.enabled;
+}
+
+// 지금 크레딧이 나가는 중인가. 컴팩트 뷰에서 5h 대신 크레딧을 세우는 기준이다.
+bool UsageWindow::creditMetering() const
+{
+    return isCreditMetering(m_currentData);
 }
 
 void UsageWindow::setData(const UsageData &data)
@@ -606,13 +616,17 @@ void UsageWindow::applyDataInternal(const UsageData &data)
     m_panel5h->setData(data.fiveHour);
     m_panel7d->setData(data.sevenDay);
 
-    if (creditActive()) {
+    if (creditVisible()) {
         int pct = qRound(data.extraUsage.utilization * 100.0);
         pct = qBound(0, pct, 100);
 
         m_extraPctLabel->setText(QString("%1%").arg(pct));
         m_extraBar->setValue(pct);
     }
+
+    // 새 사용률이 한도에 닿았거나 반대로 리셋됐을 수 있다. 물결 대상은
+    // 데이터에 달려 있으므로 여기서도 다시 정한다.
+    updateShimmerTargets();
 
     // 문구 확정 → 표시 여부 → 높이 측정 순서를 지킨다.
     updateLayoutVisibility();
@@ -687,16 +701,29 @@ void UsageWindow::refreshExecutionState()
         break;
     }
 
-    if (next != m_execState) {
-        m_execState = next;
-
-        const bool running = (next == ExecutionState::Running);
-        m_panel5h->setActive(running);
-        m_panel7d->setActive(running);
-        m_extraBar->setActive(running);
-    }
-
+    m_execState = next;
+    updateShimmerTargets();
     updateStatusIndicator();
+}
+
+// 물결(shimmer)은 "이 막대가 지금 차오르고 있다"는 신호다. 그래서 작업 중인지
+// 만으로는 부족하고, 그 창이 실제로 사용량을 받아내고 있어야 한다.
+//
+//   5h·7d — 한도를 채우고 나면 더는 차지 않는다. 초과분은 크레딧으로 넘어가는데
+//           100% 로 멈춰 선 막대가 계속 물결치면 아직 오르는 중으로 읽힌다.
+//   크레딧 — 플랜 한도가 남아 있는 동안에는 한 푼도 나가지 않는다. 추가 결제를
+//           켜 뒀다는 이유만으로 물결이 돌면 돈이 나가는 것처럼 보인다.
+//
+// 조건이 실행 상태(refreshExecutionState)와 데이터(applyDataInternal) 양쪽에서
+// 바뀌므로 두 곳 모두에서 부른다. ThresholdBar::setActive 는 값이 같으면 즉시
+// 돌아오므로 중복 호출은 비용이 없다.
+void UsageWindow::updateShimmerTargets()
+{
+    const bool running = (m_execState == ExecutionState::Running);
+
+    m_panel5h->setActive(running && !isQuotaSaturated(m_currentData.fiveHour));
+    m_panel7d->setActive(running && !isQuotaSaturated(m_currentData.sevenDay));
+    m_extraBar->setActive(running && isCreditMetering(m_currentData));
 }
 
 void UsageWindow::updateStatusIndicator()

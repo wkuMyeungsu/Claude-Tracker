@@ -38,6 +38,35 @@ struct UsageData {
     bool      fromApi = false;   // true=API 정확값, false=로컬 추정
 };
 
+// 창이 '가득 찼다'고 보는 기준. 병합 단계에서 qBound 로 1.0 에 붙지만,
+// API 백분율을 100 으로 나눈 값이라 부동소수 오차를 조금 허용한다.
+constexpr double QUOTA_SATURATED = 0.999;
+
+// 한도를 다 써서 이 창으로는 더 이상 사용량이 쌓이지 않는 상태.
+// valid 가 아니면 '아직 모른다'는 뜻이므로 찼다고 단정하지 않는다.
+inline bool isQuotaSaturated(const QuotaInfo &q)
+{
+    return q.valid && q.utilization >= QUOTA_SATURATED;
+}
+
+// 추가 결제 크레딧이 '지금 실제로 나가는 중'인가.
+//
+// extraUsage.enabled 는 "한도를 넘기면 결제하겠다"는 계정 설정일 뿐이고,
+// usedCredits 는 월 누적이라 이번 달에 한 번이라도 썼으면 계속 양수다. 둘 중
+// 무엇으로 화면 모드를 정해도 앱을 켜자마자 크레딧으로 잡혀, 아직 남아 있는
+// 5h 사용량이 가려진다.
+//
+// 크레딧은 플랜 한도를 다 쓴 뒤에야 소모된다. 판정 기준을 청구 로직
+// (UsageMerger::chargeableRatio — max(5h, 7d) 가 100% 를 넘는 몫만 청구) 과
+// 똑같이 맞춰야 표시와 과금이 같은 이야기를 한다.
+inline bool isCreditMetering(const UsageData &d)
+{
+    if (!d.extraUsage.enabled)
+        return false;
+
+    return isQuotaSaturated(d.fiveHour) || isQuotaSaturated(d.sevenDay);
+}
+
 // JSONL 한 줄에서 뽑아낸 assistant 응답 1건의 토큰 사용량.
 // SessionLogReader 가 만들고, UsageAggregator·ModelPricing 이 소비한다.
 struct TokenRecord {

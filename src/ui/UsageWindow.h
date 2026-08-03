@@ -70,8 +70,11 @@ private:
     void applyWindowOpacity();
     // 훅 상태와 폴백을 합쳐 최종 실행 상태를 정하고 점·shimmer 에 반영한다.
     void refreshExecutionState();
+    // 막대별로 물결을 켤지 정한다. 실행 상태와 사용률 둘 다에 달려 있다.
+    void updateShimmerTargets();
     void updateStatusIndicator();
-    bool creditActive() const;
+    bool creditVisible() const;
+    bool creditMetering() const;
 
     // 타이틀바는 슬라이드에서 빠져 항상 제자리에 있다. 안쪽 내용만 스택으로
     // 바뀐다(두 페이지 모두 높이가 같아 스택 레이아웃의 크기 문제가 없다).

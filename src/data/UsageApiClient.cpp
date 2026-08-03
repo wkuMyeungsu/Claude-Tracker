@@ -20,6 +20,10 @@ static constexpr int POLL_INTERVAL_MS       = 5 * 60 * 1000;
 static constexpr int INITIAL_FETCH_DELAY_MS = 500;
 static constexpr int RETRY_DELAY_MS         = 30 * 1000;  // 실패 후 재시도 간격
 static constexpr int MAX_RETRIES            = 3;          // 이 횟수 초과 시 정상 주기 복귀
+// 자격증명이 아직 없을 때 다시 들여다보는 간격. 네트워크 요청이 아니라 로컬 파일
+// 한 번 읽기라 서버에는 부담이 없고, 이 값이 곧 "로그인한 뒤 화면에 뜨기까지"의
+// 최대 지연이 된다.
+static constexpr int CREDENTIAL_RECHECK_MS  = 10 * 1000;
 
 static double normalizeUtilization(double utilization)
 {
@@ -89,18 +93,32 @@ void UsageApiClient::fetchUsage()
     if (m_pending)
         return;
 
-    scheduleNextPoll();
-
+    // 자격증명 확인은 로컬 파일 읽기 한 번이라 값이 싸다. 없거나 만료됐으면
+    // 요청을 보내지 않고 짧은 주기로 다시 본다.
+    //
+    // 예전에는 여기서도 정상 주기(5분)로 예약해 버렸다. 그래서 방금 설치해
+    // 처음 켠 사용자는 — 아직 로그인 전이거나 Claude Code 가 토큰을 갱신하기
+    // 전이라 첫 시도가 반드시 실패하는데 — 그 뒤로 5분을 통째로 기다려야
+    // 사용량이 처음 떴다. 실패 후 30초 재시도 경로도 m_consecutiveFailures 를
+    // 건드리는 onReplyFinished 안에만 있어서 이 경우엔 아예 동작하지 않았다.
+    //
+    // 토큰 없음을 만료보다 먼저 본다. .credentials.json 이 없으면 expiresAt 이
+    // 0 이라 isExpired() 가 true 가 되는데, 로그인한 적도 없는 사용자에게
+    // "토큰 만료" 라고 알리면 원인을 엉뚱한 곳에서 찾게 된다.
+    const QString token = CredentialsReader::accessToken();
+    if (token.isEmpty()) {
+        scheduleNextPoll(CREDENTIAL_RECHECK_MS);
+        emit fetchFailed("Claude Code 로그인 정보를 찾을 수 없습니다", false);
+        return;
+    }
     if (CredentialsReader::isExpired()) {
+        scheduleNextPoll(CREDENTIAL_RECHECK_MS);
         emit fetchFailed("OAuth token expired", false);
         return;
     }
 
-    const QString token = CredentialsReader::accessToken();
-    if (token.isEmpty()) {
-        emit fetchFailed("No access token found", false);
-        return;
-    }
+    // 실제로 요청을 보낼 때만 정상 주기로 예약한다.
+    scheduleNextPoll();
 
     QNetworkRequest req(QUrl("https://api.anthropic.com/api/oauth/usage"));
     req.setRawHeader("Authorization", ("Bearer " + token).toUtf8());

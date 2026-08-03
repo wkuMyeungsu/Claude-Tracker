@@ -213,9 +213,13 @@ void TrayController::applyData(const UsageData &data)
     // "그냥 파란 띠"로 보였다). 그때는 대시보드 컴팩트 뷰와 똑같이 '크레딧을
     // 얼마나 썼는가'로 바꿔 채운다.
     //
+    // 판정은 isCreditMetering 에 맡긴다. extraUsage.enabled 만 보면 결제 설정을
+    // 켜 뒀다는 이유로 앱 시작 직후부터 크레딧 링이 뜨고(usedCredits 는 월 누적이라
+    // 이번 달에 한 번 쓰면 계속 양수다), 정작 남아 있는 5h 여유가 안 보인다.
+    //
     // 한도를 모르거나($0) 아직 한 푼도 안 썼으면 채울 비율 자체가 없으므로
     // 기존 5h·7d 링을 그대로 둔다 — 빈 링으로 퇴화시키지 않는다.
-    const bool creditMetered = data.extraUsage.enabled
+    const bool creditMetered = isCreditMetering(data)
                             && data.extraUsage.limitDollars > 0.0
                             && data.extraUsage.usedCredits  > 0.0;
 
