@@ -2,8 +2,8 @@
 
 Windows 및 Linux 시스템 트레이에서 Claude Code의 사용량(Quota)과 추가 결제 크레딧을 실시간으로 추적하는 Qt6 기반 모니터링 프로그램입니다.
 
-[![Download Windows](https://img.shields.io/badge/Download-Windows_v1.2.0-0078D6?style=for-the-badge&logo=windows&logoColor=white)](https://github.com/wkuMyeungsu/Claude-Tracker/releases/tag/v1.2.0)
-![badge](https://img.shields.io/badge/version-1.2.0-blue) ![badge](https://img.shields.io/badge/Qt-6.x-green) ![badge](https://img.shields.io/badge/platform-Windows%20%7C%20Linux-blue) ![badge](https://img.shields.io/badge/language-C%2B%2B17-orange)
+[![Download Windows](https://img.shields.io/badge/Download-Windows_v1.2.1-0078D6?style=for-the-badge&logo=windows&logoColor=white)](https://github.com/wkuMyeungsu/Claude-Tracker/releases/tag/v1.2.1)
+![badge](https://img.shields.io/badge/version-1.2.1-blue) ![badge](https://img.shields.io/badge/Qt-6.x-green) ![badge](https://img.shields.io/badge/platform-Windows%20%7C%20Linux-blue) ![badge](https://img.shields.io/badge/language-C%2B%2B17-orange)
 
 ---
 
@@ -23,14 +23,14 @@ Windows 및 Linux 시스템 트레이에서 Claude Code의 사용량(Quota)과 �
 
 ---
 
-## 설치 및 실행 (v1.2.0)
+## 설치 및 실행 (v1.2.1)
 
-[릴리즈 페이지](https://github.com/wkuMyeungsu/Claude-Tracker/releases/tag/v1.2.0)에서 다운로드할 수 있습니다.
+[릴리즈 페이지](https://github.com/wkuMyeungsu/Claude-Tracker/releases/tag/v1.2.1)에서 다운로드할 수 있습니다.
 
 | 운영체제 | 파일 / 방법 | 비고 |
 | --- | --- | --- |
-| **Windows** | `claude-tracker-1.2.0-win64.msi` | 설치 프로그램 (권장) |
-| **Windows** | `claude-tracker-1.2.0-win64.zip` | 무설치 휴대용 (압축 해제 후 `bin\ClaudeTray.exe` 실행) |
+| **Windows** | `claude-tracker-1.2.1-win64.msi` | 설치 프로그램 (권장) |
+| **Windows** | `claude-tracker-1.2.1-win64.zip` | 무설치 휴대용 (압축 해제 후 `bin\ClaudeTray.exe` 실행) |
 | **Linux** | 소스 코드 빌드 실행 | Qt6 환경에서 빌드 후 `./ClaudeTray` 실행 |
 
 - **Qt 별도 설치 불필요 (Windows)**: 윈도우 패키지에는 Qt 런타임과 플러그인이 포함되어 있습니다.
